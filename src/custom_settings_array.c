@@ -151,9 +151,9 @@ zmk_custom_setting_find_array_element(const char *custom_subsystem_id, const cha
         return NULL;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     struct zmk_custom_setting *view = array_view_acquire(array_setting, index);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     return view;
 }
@@ -204,9 +204,9 @@ uint32_t zmk_custom_setting_array_size(const struct zmk_custom_setting *setting)
         return 0;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     uint32_t array_size = setting->array_state->size;
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     return array_size;
 }
@@ -361,12 +361,12 @@ int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *cons
         return ret;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     set_array_memory_size_locked(setting, array_size);
 
     ret = write_value_locked(setting, value, mode);
 
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     if (ret == 0) {
         raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
@@ -384,10 +384,10 @@ int zmk_custom_setting_array_push_back(const struct zmk_custom_setting *setting,
         return -EINVAL;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     uint32_t array_size = setting->array_state->size;
     uint32_t array_max_size = setting->array_state->max_size;
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     if (array_size >= array_max_size) {
         return -ERANGE;
@@ -411,13 +411,13 @@ int zmk_custom_setting_array_pop_back(const struct zmk_custom_setting *const_set
 
     struct zmk_custom_setting *setting = (struct zmk_custom_setting *)const_setting;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     uint32_t array_size = setting->array_state->size;
     if (array_size == 0) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ENOENT;
     }
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     const struct zmk_custom_setting *tail_const = zmk_custom_setting_find_array_element(
         setting->custom_subsystem_id, setting->array_key, array_size - 1);
@@ -427,7 +427,7 @@ int zmk_custom_setting_array_pop_back(const struct zmk_custom_setting *const_set
 
     struct zmk_custom_setting *tail = (struct zmk_custom_setting *)tail_const;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     if (value) {
         copy_value(value, effective_value(tail));
     }
@@ -449,7 +449,7 @@ int zmk_custom_setting_array_pop_back(const struct zmk_custom_setting *const_set
         break;
     }
 
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     if (ret == 0) {
         raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
@@ -473,16 +473,16 @@ int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_se
         return ret;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     struct zmk_custom_setting_array_state *array_state = setting->array_state;
     uint32_t array_size = array_state->size;
 
     if (index > array_size) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ERANGE;
     }
     if (array_size >= array_state->max_size) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ERANGE;
     }
 
@@ -525,7 +525,7 @@ int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_se
         ret = -EINVAL;
         break;
     }
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     if (ret == 0) {
         raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
@@ -545,12 +545,12 @@ int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *const_se
 
     struct zmk_custom_setting *setting = (struct zmk_custom_setting *)const_setting;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     struct zmk_custom_setting_array_state *array_state = setting->array_state;
     uint32_t array_size = array_state->size;
 
     if (index >= array_size) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ENOENT;
     }
 
@@ -590,7 +590,7 @@ int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *const_se
         ret = -EINVAL;
         break;
     }
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     if (ret == 0) {
         raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
@@ -613,20 +613,14 @@ int discard_array_element_locked(struct zmk_custom_setting *view) {
     struct zmk_custom_setting_array_state *array_state = view->array_state;
     uint32_t index = view->array_index;
 
-    set_array_memory_size_locked(view, array_state->persistent_size);
-
     if (array_state->has_persistent[index]) {
         /* No RAM-resident persistent_value copy is kept; re-read the
          * persisted value from flash straight into the buffer slot.
          * Discard is a rare, explicit user action, so a flash read here is
          * fine. */
-        char name[SETTINGS_MAX_NAME_LEN];
-        int ret = setting_storage_name(view, name, sizeof(name));
-        if (ret == 0) {
-            ret = settings_load_subtree(name);
-        }
+        int ret = reload_setting_locked(view);
         if (ret < 0) {
-            copy_value(&array_state->values[index], &array_state->defaults[index]);
+            return ret;
         }
     } else {
         copy_value(&array_state->values[index], &array_state->defaults[index]);

@@ -72,10 +72,10 @@ zmk_custom_settings_keyspace_find_for_key(const char *custom_subsystem_id, const
         return NULL;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     struct zmk_custom_setting_keyspace *keyspace =
         keyspace_find_for_key_locked(custom_subsystem_id, key);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     return keyspace;
 }
@@ -242,13 +242,13 @@ static int keyspace_write_raw_payload_with_key(const struct zmk_custom_setting *
         }
         memcpy(keyspace_blob_scratch, key, key_len);
     } else {
-        k_mutex_lock(&custom_settings_lock, K_FOREVER);
+        custom_settings_state_lock();
         key_len = keyspace_blob_key_len_locked(setting);
         key_len = MIN(key_len, sizeof(keyspace_blob_scratch) - 1);
         if (setting->state->blob.data != NULL && key_len > 0) {
             memcpy(keyspace_blob_scratch, setting->state->blob.data, key_len);
         }
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
     }
     keyspace_blob_scratch[key_len] = '\0';
 
@@ -306,14 +306,14 @@ int keyspace_read_payload(const struct zmk_custom_setting *setting,
                           struct zmk_custom_setting_value *out_value) {
     struct zmk_custom_setting_value blob_value;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     const struct zmk_custom_setting_value *effective = effective_value(setting);
     if (!effective) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -EMSGSIZE;
     }
     copy_value(&blob_value, effective);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     const uint8_t *nul = memchr(blob_value.bytes_value, '\0', blob_value.size);
     size_t key_len = nul ? (size_t)(nul - blob_value.bytes_value) : blob_value.size;
@@ -333,7 +333,7 @@ int keyspace_read_into(const struct zmk_custom_setting *setting, void *buf, size
                        size_t *out_size, enum zmk_custom_setting_value_type *out_type) {
     const struct zmk_custom_setting_keyspace *keyspace = setting->_keyspace;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     if (setting_uses_blob_store(setting) && !setting_temporary_active(setting) &&
         setting->state->blob.size > CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE) {
         const struct zmk_custom_setting_state *state = setting->state;
@@ -353,10 +353,10 @@ int keyspace_read_into(const struct zmk_custom_setting *setting, void *buf, size
                 *out_type = keyspace->value_type;
             }
         }
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return ret;
     }
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     struct zmk_custom_setting_value value;
     int ret = keyspace_read_payload(setting, &value);
@@ -389,9 +389,9 @@ zmk_custom_setting_keyspace_find(const struct zmk_custom_setting_keyspace *keysp
     struct zmk_custom_setting_keyspace *mutable_keyspace =
         (struct zmk_custom_setting_keyspace *)keyspace;
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     int index = keyspace_slot_index_for_key_locked(mutable_keyspace, key);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     return index >= 0 ? &keyspace->slots[index].setting : NULL;
 }
@@ -419,30 +419,30 @@ int zmk_custom_setting_keyspace_create(struct zmk_custom_setting_keyspace *keysp
         return -ENAMETOOLONG;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
 
     if (keyspace_slot_index_for_key_locked(keyspace, key) >= 0) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -EEXIST;
     }
 
     int index = keyspace_free_slot_index_locked(keyspace);
     if (index < 0) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ENOSPC;
     }
 
     struct zmk_custom_setting *setting = keyspace_bind_slot_locked(keyspace, (uint32_t)index);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     ret = keyspace_write_blob(setting, key, value, mode);
     if (ret < 0) {
         /* Roll back: the initial value write failed (e.g. constraint
          * violation, or -ENOSPC from the pool), so do not leave a
          * half-created entry occupying a slot. */
-        k_mutex_lock(&custom_settings_lock, K_FOREVER);
+        custom_settings_state_lock();
         keyspace_release_slot_locked(keyspace, (uint32_t)index);
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return ret;
     }
 
@@ -458,14 +458,14 @@ int zmk_custom_setting_keyspace_delete(struct zmk_custom_setting_keyspace *keysp
         return -EINVAL;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     int index = keyspace_slot_index_for_key_locked(keyspace, key);
     if (index < 0) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ENOENT;
     }
     struct zmk_custom_setting *setting = &keyspace->slots[index].setting;
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     /* Erase the persisted record (if any) the same way a scalar setting's
      * reset does, then release the slot. Ignore -ENOENT from a setting that
@@ -482,9 +482,9 @@ int zmk_custom_setting_keyspace_delete(struct zmk_custom_setting_keyspace *keysp
         return ret;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     keyspace_release_slot_locked(keyspace, (uint32_t)index);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
 
     return 0;
 }

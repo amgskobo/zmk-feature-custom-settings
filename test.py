@@ -55,6 +55,22 @@ class WestCommandsTests(unittest.TestCase):
         self.assertIn("PASS: studio", result.stdout, result.stdout + result.stderr)
         self.assertNotIn("FAILED: ", result.stdout, result.stdout + result.stderr)
 
+    @unittest.skipUnless(
+        platform.system() == "Linux", "kernel boundaries require Linux"
+    )
+    def test_settings_kernel_boundaries(self):
+        result = subprocess.run(
+            ["bash", "tests/settings-boundary/run.sh"],
+            capture_output=True,
+            text=True,
+            cwd=THIS_DIR,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Completed core boundary scenarios=8 repeats=3", result.stdout)
+        self.assertIn(
+            "Completed features boundary scenarios=11 repeats=3", result.stdout
+        )
+
     def test_zmk_build(self):
         self._test_zmk_build(
             {

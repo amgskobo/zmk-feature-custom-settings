@@ -196,12 +196,12 @@ size_t zmk_custom_setting_large_pool_used(const struct zmk_custom_setting_large_
     }
 
     size_t used = 0;
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     for (const struct zmk_custom_setting *member = pool->members; member;
          member = member->state->_pool_next) {
         used += pool_member_extent(member);
     }
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
     return used;
 }
 
@@ -212,9 +212,9 @@ int zmk_custom_setting_with_large_raw_bytes(const struct zmk_custom_setting *set
         return -EINVAL;
     }
 
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_state_lock();
     if (!setting_uses_blob_store(setting) || setting_temporary_active(setting)) {
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return -ENOTSUP;
     }
 
@@ -230,13 +230,13 @@ int zmk_custom_setting_with_large_raw_bytes(const struct zmk_custom_setting *set
             state->blob.size > key_len ? state->blob.data + key_len + 1 : (const uint8_t *)"";
         size_t payload_size = state->blob.size > key_len ? state->blob.size - key_len - 1 : 0;
         visitor(payload, payload_size, user_data);
-        k_mutex_unlock(&custom_settings_lock);
+        custom_settings_state_unlock();
         return 0;
     }
 
     const uint8_t *data = state->blob.size > 0 ? state->blob.data : (const uint8_t *)"";
     visitor(data, state->blob.size, user_data);
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_state_unlock();
     return 0;
 }
 
@@ -264,6 +264,7 @@ int write_large_locked(const struct zmk_custom_setting *setting, const void *dat
         if (ret < 0) {
             return ret;
         }
+        set_setting_dirty(setting, true);
         clear_temporary_locked(setting);
         return save_setting_locked(setting);
     case ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY:

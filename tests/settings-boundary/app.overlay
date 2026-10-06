@@ -1,0 +1,10 @@
+/ {
+    boundary_none: boundary_none {
+        compatible = "zmk,behavior-none";
+        #binding-cells = <0>;
+    };
+    keymap {
+        compatible = "zmk,keymap";
+        default_layer { bindings = <&boundary_none>; };
+    };
+};

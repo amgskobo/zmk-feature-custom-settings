@@ -881,6 +881,25 @@ persisted value is not cached separately:
   the setting falls back to the current default on the next boot. Keyspace
   entries are exempt (they carry a user key and have no compile-time default).
 
+### Persistence failures and concurrency
+
+A failed PERSIST write retains the new memory value as unsaved. Retrying save
+can persist it; discard can restore the previous stored value. A failed discard
+read, or a missing record that was expected to exist, returns an error and keeps
+the unsaved state. It does not announce a successful discard. Missing records
+without a known persisted value still use the default. These rules also apply
+to arrays, pooled large values and keyspace payloads. Scoped operations and
+array reloads can retain successful partial work; they are not transactions.
+
+Module state access acquires Zephyr's settings mutex before its own mutex to
+avoid a load/write lock inversion. This uses the internal `settings_lock`
+symbol, verified for the selected Zephyr revision by the owner native tests and
+board builds. Recheck that dependency on Zephyr upgrades. Reads serialize with
+settings I/O, so this is not a nonblocking or latency guarantee. Discard uses a
+direct load callback to preserve record read/parse errors; a backend-wide load
+failure without a record callback may appear as `-ENOENT`, because Zephyr's
+load API does not expose every backend error.
+
 ## Web UI
 
 The web UI in `web/` connects to a keyboard over serial, finds the
@@ -933,6 +952,12 @@ npm run dev
 See [web/README.md](./web/README.md) for web development commands.
 
 ## Development
+
+For focused persistence/concurrency checks, see
+[the settings boundary fixture](tests/settings-boundary/README.md) and run
+`bash tests/settings-boundary/run.sh` from the resolved west workspace.
+The check reports real kernel lock/dirty-state contract failures with a nonzero
+exit; these boundaries are not established by the existing single-thread tests.
 
 The `tests/zmk-config` build enables `CONFIG_ZMK_CUSTOM_SETTINGS_ZMK_CONFIG_SAMPLES`
 for module-enabled artifacts. Flash `custom_settings_board_with_rpc` to a real

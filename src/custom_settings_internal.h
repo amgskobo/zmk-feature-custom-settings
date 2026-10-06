@@ -39,6 +39,19 @@
  * take it too. */
 extern struct k_mutex custom_settings_lock;
 
+/* Runtime access takes the Zephyr settings lock before the state lock.
+ * Recursive calls are
+ * allowed; never take the state mutex directly.
+ * The settings mutex is a tested Zephyr
+ * compatibility dependency. */
+void custom_settings_state_lock(void);
+void custom_settings_state_unlock(void);
+
+/* Caller holds the paired guard. Reload this record, preserving h_set/read
+ * errors and returning
+ * -ENOENT for a missing expected record. */
+int reload_setting_locked(const struct zmk_custom_setting *setting);
+
 /*
  * ---------------------------------------------------------------------
  * POOL entry points (defined in custom_settings_pool.c when
