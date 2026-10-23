@@ -688,9 +688,18 @@ int ret = zmk_custom_setting_keyspace_create(
  * -ENAMETOOLONG if the key does not fit, -EINVAL for a mismatched
  * prefix or value type. */
 
-zmk_custom_setting_keyspace_delete(&my_macros, "macro/my-macro-1");
+zmk_custom_setting_keyspace_rename(&my_macros, "macro/my-macro-1", "macro/greeting",
+                                   ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+/* Same slot, storage record and value under the new key, in one write.
+ * -ENOENT / -EEXIST / -ENAMETOOLONG / -EINVAL / -ENOSPC as above; on failure
+ * the entry is unchanged. */
+
+zmk_custom_setting_keyspace_delete(&my_macros, "macro/greeting");
 /* -ENOENT if the key has no live slot. */
 ```
+
+A rename keeps the slot index, so anything that refers to an entry by slot
+(such as a keymap parameter) keeps pointing at it.
 
 For a `BYTES`/`STRING` keyspace, `max_size` can exceed
 `CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE` exactly like

@@ -1941,6 +1941,77 @@ static int test_macro_slot_of(const struct zmk_custom_setting *setting) {
     return -1;
 }
 
+/* A rename keeps the entry's slot, ordinal storage record and value; a
+ * refused rename changes nothing; a MEMORY rename is discarded back to the
+ * persisted key. */
+static int test_keyspace_rename(void) {
+    const enum zmk_custom_setting_write_mode memory = ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY;
+    const struct zmk_custom_setting *first = NULL;
+    const struct zmk_custom_setting *second = NULL;
+    int ret = zmk_custom_setting_keyspace_create(
+        &test_macro_keyspace, "macro/first", &ZMK_CUSTOM_SETTING_VALUE_INT32(7), memory, &first);
+    if (ret == 0) {
+        ret = zmk_custom_setting_keyspace_create(&test_macro_keyspace, "macro/second",
+                                                 &ZMK_CUSTOM_SETTING_VALUE_INT32(8),
+                                                 ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &second);
+    }
+    if (ret < 0) {
+        LOG_ERR("Rename setup failed: %d", ret);
+        return ret;
+    }
+    char record_name[48];
+    snprintf(record_name, sizeof(record_name), "custom_settings/test/macro/#%d",
+             test_macro_slot_of(second));
+
+    ret = zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/second", "macro/third",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+    const struct test_settings_record *record = test_settings_find_record(record_name);
+    const struct zmk_custom_setting_keyspace *ks = &test_macro_keyspace;
+    if (ret < 0 || zmk_custom_setting_keyspace_find(ks, "macro/third") != second ||
+        zmk_custom_setting_keyspace_find(ks, "macro/second") != NULL ||
+        expect_int_value_by_key("test", "macro/third", 8) < 0 || !record ||
+        record->len < sizeof("macro/third") || memcmp(record->data, "macro/third", 12) != 0) {
+        LOG_ERR("Rename did not keep the slot, record and value: ret=%d", ret);
+        return -EINVAL;
+    }
+
+    if (zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/first", "macro/third",
+                                           memory) != -EEXIST ||
+        zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/first", "macro/first",
+                                           memory) != -EEXIST ||
+        zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/missing", "macro/x",
+                                           memory) != -ENOENT ||
+        zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/first", "other/x",
+                                           memory) != -EINVAL ||
+        zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/first",
+                                           "macro/this-name-is-too-long",
+                                           memory) != -ENAMETOOLONG ||
+        zmk_custom_setting_keyspace_find(&test_macro_keyspace, "macro/first") != first ||
+        expect_int_value_by_key("test", "macro/first", 7) < 0) {
+        LOG_ERR("A refused rename changed an entry");
+        return -EINVAL;
+    }
+
+    ret = zmk_custom_setting_keyspace_rename(&test_macro_keyspace, "macro/third", "macro/fourth",
+                                             memory);
+    if (ret < 0 || zmk_custom_setting_keyspace_find(ks, "macro/fourth") != second) {
+        LOG_ERR("MEMORY rename failed: %d", ret);
+        return -EINVAL;
+    }
+    uint32_t affected_count = 0;
+    ret = zmk_custom_settings_discard_scope("test", NULL, "macro/", &affected_count);
+    if (ret < 0 || zmk_custom_setting_keyspace_find(ks, "macro/third") != second ||
+        zmk_custom_setting_keyspace_find(ks, "macro/fourth") != NULL) {
+        LOG_ERR("Discard did not restore the persisted key: ret=%d", ret);
+        return -EINVAL;
+    }
+
+    zmk_custom_setting_keyspace_delete(&test_macro_keyspace, "macro/first");
+    zmk_custom_setting_keyspace_delete(&test_macro_keyspace, "macro/third");
+    LOG_INF("PASS: custom_settings_keyspace_rename_keeps_slot");
+    return 0;
+}
+
 /*
  * Regression for "No keyspace registered for this key" on CreateSetting.
  *
@@ -2930,6 +3001,11 @@ static int custom_settings_test_init(void) {
     }
 
     ret = test_keyspace_lifecycle();
+    if (ret < 0) {
+        return ret;
+    }
+
+    ret = test_keyspace_rename();
     if (ret < 0) {
         return ret;
     }

@@ -1279,6 +1279,17 @@ int zmk_custom_setting_keyspace_create(struct zmk_custom_setting_keyspace *keysp
 int zmk_custom_setting_keyspace_delete(struct zmk_custom_setting_keyspace *keyspace,
                                        const char *key);
 
+/* Rename one entry in place: `old_key`'s slot keeps its index, storage
+ * record and payload and takes `new_key`, in one write in `mode` (a MEMORY
+ * rename is discarded back to the persisted key). Returns -ENOENT if
+ * `old_key` has no live slot, -EEXIST if `new_key` already has one
+ * (including `new_key` == `old_key`), -EINVAL / -ENAMETOOLONG for `new_key`
+ * as create() does, and -ENOSPC if the pool cannot hold a longer key; on
+ * failure the entry is unchanged. */
+int zmk_custom_setting_keyspace_rename(struct zmk_custom_setting_keyspace *keyspace,
+                                       const char *old_key, const char *new_key,
+                                       enum zmk_custom_setting_write_mode mode);
+
 /* Find a keyspace's currently live entry by its literal user key (e.g.
  * "macro/my-macro-1"), or NULL if not bound to a slot right now. Decodes
  * each live slot's blob to compare (bounded by max_entries, not the pool

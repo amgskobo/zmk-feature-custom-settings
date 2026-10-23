@@ -521,6 +521,53 @@ int zmk_custom_setting_keyspace_delete(struct zmk_custom_setting_keyspace *keysp
     return 0;
 }
 
+/* The payload a rename carries over, staged under keyspace_blob_scratch_lock
+ * (taken again, recursively, by the write that assembles the new blob). */
+static uint8_t keyspace_rename_payload[CONFIG_ZMK_CUSTOM_SETTINGS_LARGE_VALUE_MAX_SIZE];
+
+int zmk_custom_setting_keyspace_rename(struct zmk_custom_setting_keyspace *keyspace,
+                                       const char *old_key, const char *new_key,
+                                       enum zmk_custom_setting_write_mode mode) {
+    if (!keyspace || !old_key || !new_key || !keyspace_key_matches_prefix(keyspace, new_key)) {
+        return -EINVAL;
+    }
+    size_t key_len = bounded_strlen(new_key, keyspace->max_key_len);
+    if (key_len == 0 || key_len >= keyspace->max_key_len || new_key[key_len] != '\0') {
+        return -ENAMETOOLONG;
+    }
+
+    custom_settings_state_lock();
+    int index = keyspace_slot_index_for_key_locked(keyspace, old_key);
+    bool taken = keyspace_slot_index_for_key_locked(keyspace, new_key) >= 0;
+    custom_settings_state_unlock();
+    if (index < 0) {
+        return -ENOENT;
+    }
+    if (taken) {
+        return -EEXIST;
+    }
+    const struct zmk_custom_setting *setting = &keyspace->slots[index].setting;
+
+    k_mutex_lock(&keyspace_blob_scratch_lock, K_FOREVER);
+    /* The memory value, not a temporary override, is what gets renamed. */
+    custom_settings_memory_lock();
+    const struct zmk_custom_setting_state *state = setting->state;
+    size_t old_key_len = keyspace_blob_key_len_locked(setting);
+    size_t payload_size = state->blob.size > old_key_len ? state->blob.size - old_key_len - 1 : 0;
+    int ret = payload_size <= sizeof(keyspace_rename_payload) ? 0 : -EMSGSIZE;
+    if (ret == 0 && payload_size > 0) {
+        memcpy(keyspace_rename_payload, state->blob.data + old_key_len + 1, payload_size);
+    }
+    custom_settings_memory_unlock();
+
+    if (ret == 0) {
+        ret = keyspace_write_raw_payload_with_key(setting, new_key, keyspace_rename_payload,
+                                                  payload_size, mode, false);
+    }
+    k_mutex_unlock(&keyspace_blob_scratch_lock);
+    return ret;
+}
+
 /* Parse a stored record name's remainder (after the custom_subsystem_id
  * component split off by settings_name_next, e.g. "macro/#3" for a keyspace
  * whose key_prefix is "macro/") as "<key_prefix>#<index>" for `keyspace`.
