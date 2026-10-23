@@ -31,23 +31,26 @@ ZMK_EVENT_IMPL(zmk_custom_settings_initialized);
 
 K_MUTEX_DEFINE(custom_settings_lock);
 
-/* Zephyr invokes h_set while holding settings_lock. Always acquire that lock
- * before our state
- * lock, including readers and recursive feature calls.
- * Reversing the order deadlocks a load
- * against save/discard/reset. This internal
- * Zephyr symbol is a compatibility dependency checked
- * by owner native tests
- * and production builds. */
+/* Zephyr invokes h_set while holding settings_lock. Operations which may
+ * access storage or invoke a caller's callback must take that lock before
+ * our state lock, including recursive feature calls. Reversing the order
+ * deadlocks a load against save/discard/reset. Pure RAM lookup/copy operations
+ * use only the memory guard: settings_load may hold settings_lock while
+ * waiting for work on a queue whose consumer reads these values.
+ * This internal Zephyr symbol is checked by owner native tests and builds. */
 extern struct k_mutex settings_lock;
+
+void custom_settings_memory_lock(void) { k_mutex_lock(&custom_settings_lock, K_FOREVER); }
+
+void custom_settings_memory_unlock(void) { k_mutex_unlock(&custom_settings_lock); }
 
 void custom_settings_state_lock(void) {
     k_mutex_lock(&settings_lock, K_FOREVER);
-    k_mutex_lock(&custom_settings_lock, K_FOREVER);
+    custom_settings_memory_lock();
 }
 
 void custom_settings_state_unlock(void) {
-    k_mutex_unlock(&custom_settings_lock);
+    custom_settings_memory_unlock();
     k_mutex_unlock(&settings_lock);
 }
 
@@ -80,8 +83,7 @@ int reload_setting_locked(const struct zmk_custom_setting *setting) {
         .result = -ENOENT,
     };
     /* Normal settings_load_subtree hides h_set/read errors. A direct callback
-     * preserves them
-     * without raising another boot event. */
+     * preserves them without raising another boot event. */
     ret = settings_load_subtree_direct(name, reload_one, &reload);
     return ret < 0 ? ret : reload.result;
 }
@@ -279,8 +281,7 @@ static void apply_scalar_default_locked(const struct zmk_custom_setting *setting
     }
     int ret = store_scalar_value_locked(setting, setting_default_value(setting));
     if (ret < 0) {
-        LOG_ERR("Custom settings pool has no room for %s/%s's default value (%d)",
-                setting->custom_subsystem_id, setting->key, ret);
+        LOG_ERR("settings default allocation failed: rc=%d", ret);
     }
 }
 
@@ -550,13 +551,20 @@ const struct zmk_custom_setting_value *effective_value(const struct zmk_custom_s
     return memory_value_locked(setting);
 }
 
-void raise_setting_changed(const struct zmk_custom_setting *setting,
-                           enum zmk_custom_setting_changed_kind kind) {
+static void raise_setting_changed_with_notification(const struct zmk_custom_setting *setting,
+                                                    enum zmk_custom_setting_changed_kind kind,
+                                                    bool suppress_notification) {
     raise_zmk_custom_setting_changed((struct zmk_custom_setting_changed){
         .setting = setting,
         .kind = kind,
         .source = ZMK_CUSTOM_SETTING_SOURCE_LOCAL,
+        .suppress_studio_notification = suppress_notification,
     });
+}
+
+void raise_setting_changed(const struct zmk_custom_setting *setting,
+                           enum zmk_custom_setting_changed_kind kind) {
+    raise_setting_changed_with_notification(setting, kind, false);
 }
 
 bool zmk_custom_setting_matches(const struct zmk_custom_setting *setting,
@@ -625,9 +633,9 @@ const struct zmk_custom_setting *zmk_custom_setting_find(const char *custom_subs
 const char *zmk_custom_setting_public_key(const struct zmk_custom_setting *setting) {
     const struct zmk_custom_setting_keyspace *keyspace = zmk_custom_setting_keyspace_of(setting);
     if (keyspace) {
-        custom_settings_state_lock();
+        custom_settings_memory_lock();
         const char *key = keyspace_public_key_locked(setting);
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return key;
     }
 
@@ -1051,10 +1059,10 @@ int zmk_custom_setting_read(const struct zmk_custom_setting *setting,
         return keyspace_read_payload(setting, value);
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     if (zmk_custom_setting_is_array(setting) &&
         setting->array_index >= setting->array_state->size) {
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return -ENOENT;
     }
 
@@ -1064,11 +1072,11 @@ int zmk_custom_setting_read(const struct zmk_custom_setting *setting,
          * use zmk_custom_setting_read_into (or, over RPC, the ordinary
          * streamed GetSetting/ListSettings response - see
          * custom_settings_handler.c) instead of the fixed-carrier read. */
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return -EMSGSIZE;
     }
     copy_value(value, effective);
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return 0;
 }
@@ -1079,14 +1087,14 @@ int zmk_custom_setting_read_default(const struct zmk_custom_setting *setting,
         return -EINVAL;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     const struct zmk_custom_setting_value *def = setting_default_value(setting);
     if (!def) {
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return -ENOENT;
     }
     copy_value(value, def);
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return 0;
 }
@@ -1103,9 +1111,9 @@ bool zmk_custom_setting_matches_default(const struct zmk_custom_setting *setting
         return false;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     bool matches = value_matches_default_locked(setting);
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return matches;
 }
@@ -1238,7 +1246,7 @@ int write_value_locked(const struct zmk_custom_setting *setting,
  */
 static int write_scalar_value(const struct zmk_custom_setting *setting,
                               const struct zmk_custom_setting_value *value,
-                              enum zmk_custom_setting_write_mode mode) {
+                              enum zmk_custom_setting_write_mode mode, bool suppress_notification) {
     int ret = zmk_custom_setting_validate(setting, value);
     if (ret < 0) {
         return ret;
@@ -1258,17 +1266,20 @@ unlock:
     custom_settings_state_unlock();
 
     if (ret == 0) {
-        raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                           ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                           : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
+        raise_setting_changed_with_notification(setting,
+                                                mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                                    ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                                    : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                                suppress_notification);
     }
 
     return ret;
 }
 
-int zmk_custom_setting_write(const struct zmk_custom_setting *setting,
-                             const struct zmk_custom_setting_value *value,
-                             enum zmk_custom_setting_write_mode mode) {
+static int write_with_notification(const struct zmk_custom_setting *setting,
+                                   const struct zmk_custom_setting_value *value,
+                                   enum zmk_custom_setting_write_mode mode,
+                                   bool suppress_notification) {
     if (!setting || !value) {
         return -EINVAL;
     }
@@ -1286,10 +1297,23 @@ int zmk_custom_setting_write(const struct zmk_custom_setting *setting,
         if (ret < 0) {
             return ret;
         }
-        return keyspace_write_blob(setting, NULL, value, mode);
+        return keyspace_write_blob_with_notification(setting, NULL, value, mode,
+                                                     suppress_notification);
     }
 
-    return write_scalar_value(setting, value, mode);
+    return write_scalar_value(setting, value, mode, suppress_notification);
+}
+
+int zmk_custom_setting_write(const struct zmk_custom_setting *setting,
+                             const struct zmk_custom_setting_value *value,
+                             enum zmk_custom_setting_write_mode mode) {
+    return write_with_notification(setting, value, mode, false);
+}
+
+int zmk_custom_setting_write_quiet(const struct zmk_custom_setting *setting,
+                                   const struct zmk_custom_setting_value *value,
+                                   enum zmk_custom_setting_write_mode mode) {
+    return write_with_notification(setting, value, mode, true);
 }
 
 int zmk_custom_setting_write_by_key(const char *custom_subsystem_id, const char *key,
@@ -1303,7 +1327,8 @@ int zmk_custom_setting_write_by_key(const char *custom_subsystem_id, const char 
     return zmk_custom_setting_write(setting, value, mode);
 }
 
-int zmk_custom_setting_save(const struct zmk_custom_setting *const_setting) {
+static int save_with_notification(const struct zmk_custom_setting *const_setting,
+                                  bool suppress_notification) {
     if (!const_setting) {
         return -EINVAL;
     }
@@ -1316,10 +1341,19 @@ int zmk_custom_setting_save(const struct zmk_custom_setting *const_setting) {
     custom_settings_state_unlock();
 
     if (ret == 0) {
-        raise_setting_changed(setting, ZMK_CUSTOM_SETTING_CHANGED_SAVED);
+        raise_setting_changed_with_notification(setting, ZMK_CUSTOM_SETTING_CHANGED_SAVED,
+                                                suppress_notification);
     }
 
     return ret;
+}
+
+int zmk_custom_setting_save(const struct zmk_custom_setting *setting) {
+    return save_with_notification(setting, false);
+}
+
+int zmk_custom_setting_save_quiet(const struct zmk_custom_setting *setting) {
+    return save_with_notification(setting, true);
 }
 
 int zmk_custom_setting_discard(const struct zmk_custom_setting *const_setting) {
@@ -1338,12 +1372,14 @@ int zmk_custom_setting_discard(const struct zmk_custom_setting *const_setting) {
          * element view (from apply_scope's per-active-element expansion):
          * discard just that element. */
         int ret = 0;
+        bool restored_any = false;
         if (setting->array_index == ZMK_CUSTOM_SETTING_ARRAY_NONE) {
             struct zmk_custom_setting_array_state *array_state = setting->array_state;
             uint32_t restore_size = array_state->persistent_size;
             for (uint32_t index = 0; index < restore_size && ret == 0; index++) {
                 struct zmk_custom_setting *view = array_view_acquire(setting, index);
                 ret = discard_array_element_locked(view);
+                restored_any |= ret == 0;
             }
         } else {
             ret = discard_array_element_locked(setting);
@@ -1352,7 +1388,9 @@ int zmk_custom_setting_discard(const struct zmk_custom_setting *const_setting) {
             set_array_memory_size_locked(setting, setting->array_state->persistent_size);
         }
         custom_settings_state_unlock();
-        if (ret == 0) {
+        /* A read failure part-way through has still restored the elements
+         * before it, so listeners must re-read those. */
+        if (ret == 0 || restored_any) {
             raise_setting_changed(setting, ZMK_CUSTOM_SETTING_CHANGED_DISCARDED);
         }
         return ret;
@@ -1522,9 +1560,9 @@ static int apply_scope_to_setting(const struct zmk_custom_setting *setting,
                                   uint32_t *count, int *first_error) {
     if (zmk_custom_setting_is_array(setting) &&
         setting->array_index == ZMK_CUSTOM_SETTING_ARRAY_NONE) {
-        custom_settings_state_lock();
+        custom_settings_memory_lock();
         uint32_t active_size = setting->array_state->size;
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
 
         for (uint32_t index = 0; index < active_size; index++) {
             const struct zmk_custom_setting *view = zmk_custom_setting_find_array_element(
@@ -1577,9 +1615,9 @@ static int apply_scope(const char *custom_subsystem_id, const char *key, const c
     if (IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE)) {
         ZMK_CUSTOM_SETTING_KEYSPACE_FOREACH(keyspace) {
             for (uint32_t i = 0; i < keyspace->max_entries; i++) {
-                custom_settings_state_lock();
+                custom_settings_memory_lock();
                 bool in_use = keyspace->slots[i].in_use;
-                custom_settings_state_unlock();
+                custom_settings_memory_unlock();
                 if (!in_use) {
                     continue;
                 }
@@ -1625,13 +1663,13 @@ bool zmk_custom_setting_has_unsaved_value(const struct zmk_custom_setting *setti
         return false;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     bool has_unsaved = setting_temporary_active(setting) || setting_is_dirty(setting);
     if (zmk_custom_setting_is_array(setting)) {
         has_unsaved =
             has_unsaved || setting->array_state->size != setting->array_state->persistent_size;
     }
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return has_unsaved;
 }
@@ -1738,7 +1776,7 @@ int zmk_custom_setting_read_into(const struct zmk_custom_setting *setting, void 
      * store, so a value larger than the fixed carrier is still readable (the
      * effective_value carrier below cannot represent it). Skipped while a
      * temporary override is active - those are always carrier-sized. */
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     if (setting_uses_blob_store(setting) && !setting_temporary_active(setting)) {
         size_t size = setting->state->blob.size;
         int ret = 0;
@@ -1758,16 +1796,18 @@ int zmk_custom_setting_read_into(const struct zmk_custom_setting *setting, void 
                 *out_type = setting->value_type;
             }
         }
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return ret;
     }
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
-    struct read_into_context ctx = {.buf = buf, .capacity = capacity, .ret = -EIO};
-    int ret = zmk_custom_setting_with_value(setting, read_into_visitor, &ctx);
+    struct zmk_custom_setting_value value;
+    int ret = zmk_custom_setting_read(setting, &value);
     if (ret < 0) {
         return ret;
     }
+    struct read_into_context ctx = {.buf = buf, .capacity = capacity, .ret = -EIO};
+    read_into_visitor(&value, &ctx);
     if (ctx.ret < 0) {
         return ctx.ret;
     }
@@ -1794,15 +1834,15 @@ int zmk_custom_setting_value_size(const struct zmk_custom_setting *setting, size
         return -EINVAL;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     if (setting_uses_blob_store(setting) && !setting_temporary_active(setting)) {
         size_t blob_size = setting->state->blob.size;
         size_t key_len = keyspace ? keyspace_blob_key_len_locked(setting) : 0;
         *out_size = blob_size > key_len ? blob_size - (key_len ? key_len + 1 : 0) : 0;
-        custom_settings_state_unlock();
+        custom_settings_memory_unlock();
         return 0;
     }
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     struct zmk_custom_setting_value value;
     int ret = keyspace ? keyspace_read_payload(setting, &value)
@@ -1826,8 +1866,9 @@ int zmk_custom_setting_value_size(const struct zmk_custom_setting *setting, size
  * this function directly to avoid re-triggering the keyspace interception in
  * the public dispatchers.
  */
-int write_bytes_raw(const struct zmk_custom_setting *setting, const void *data, size_t size,
-                    enum zmk_custom_setting_write_mode mode) {
+int write_bytes_raw_with_notification(const struct zmk_custom_setting *setting, const void *data,
+                                      size_t size, enum zmk_custom_setting_write_mode mode,
+                                      bool suppress_notification) {
     /* Blob values exceeding the fixed carrier take a dedicated raw path
      * (the carrier below cannot hold them). Values that still fit the
      * carrier fall through to the normal validated path so constraints keep
@@ -1843,9 +1884,11 @@ int write_bytes_raw(const struct zmk_custom_setting *setting, const void *data, 
         custom_settings_state_unlock();
 
         if (ret == 0) {
-            raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                               ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                               : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
+            raise_setting_changed_with_notification(setting,
+                                                    mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                                        ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                                        : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                                    suppress_notification);
         }
         return ret;
     }
@@ -1875,20 +1918,37 @@ int write_bytes_raw(const struct zmk_custom_setting *setting, const void *data, 
         return -EINVAL;
     }
 
-    return write_scalar_value(setting, &value, mode);
+    return write_scalar_value(setting, &value, mode, suppress_notification);
 }
 
-int zmk_custom_setting_write_bytes(const struct zmk_custom_setting *setting, const void *data,
-                                   size_t size, enum zmk_custom_setting_write_mode mode) {
+int write_bytes_raw(const struct zmk_custom_setting *setting, const void *data, size_t size,
+                    enum zmk_custom_setting_write_mode mode) {
+    return write_bytes_raw_with_notification(setting, data, size, mode, false);
+}
+
+static int write_bytes_with_notification(const struct zmk_custom_setting *setting, const void *data,
+                                         size_t size, enum zmk_custom_setting_write_mode mode,
+                                         bool suppress_notification) {
     if (!setting || (!data && size > 0)) {
         return -EINVAL;
     }
 
     if (zmk_custom_setting_keyspace_of(setting)) {
-        return keyspace_write_raw_payload(setting, data, size, mode);
+        return keyspace_write_raw_payload_with_notification(setting, data, size, mode,
+                                                            suppress_notification);
     }
 
-    return write_bytes_raw(setting, data, size, mode);
+    return write_bytes_raw_with_notification(setting, data, size, mode, suppress_notification);
+}
+
+int zmk_custom_setting_write_bytes(const struct zmk_custom_setting *setting, const void *data,
+                                   size_t size, enum zmk_custom_setting_write_mode mode) {
+    return write_bytes_with_notification(setting, data, size, mode, false);
+}
+
+int zmk_custom_setting_write_bytes_quiet(const struct zmk_custom_setting *setting, const void *data,
+                                         size_t size, enum zmk_custom_setting_write_mode mode) {
+    return write_bytes_with_notification(setting, data, size, mode, true);
 }
 
 int zmk_custom_setting_get_int32(const struct zmk_custom_setting *setting, int32_t *value) {
@@ -1982,8 +2042,7 @@ static int value_from_storage(const struct zmk_custom_setting *setting, const vo
              * or this boot's other pool members already claim the rest of
              * the budget) - skip this persisted value rather than fail boot,
              * mirroring the keyspace-pool-exhaustion policy. */
-            LOG_WRN("Custom settings pool exhausted; skipping persisted value for %s/%s",
-                    setting->custom_subsystem_id, setting->key);
+            LOG_WRN("settings pool exhausted; persisted value skipped");
             return ret;
         }
         set_setting_has_persistent_value(setting, true);
@@ -2040,8 +2099,7 @@ static int value_from_storage(const struct zmk_custom_setting *setting, const vo
 
     ret = store_memory_value_locked(setting, &value);
     if (ret < 0) {
-        LOG_WRN("Custom settings pool exhausted; skipping persisted value for %s/%s",
-                setting->custom_subsystem_id, setting->key);
+        LOG_WRN("settings pool exhausted; persisted value skipped");
         return ret;
     }
     set_setting_has_persistent_value(setting, true);
@@ -2169,9 +2227,8 @@ static int custom_settings_handle_set(const char *name, size_t len, settings_rea
                         continue;
                     }
                     if (index >= keyspace->max_entries) {
-                        LOG_WRN("Custom settings keyspace record %s/%s has out-of-range ordinal "
-                                "index %u (max_entries=%u) - dropping",
-                                custom_subsystem_id, next, index, keyspace->max_entries);
+                        LOG_WRN("settings ordinal out of range: index=%u capacity=%u", index,
+                                keyspace->max_entries);
                         continue;
                     }
                     if (keyspace->slots[index].in_use) {
@@ -2229,15 +2286,11 @@ static int custom_settings_handle_set(const char *name, size_t len, settings_rea
 /* Raise the one-shot zmk_custom_settings_initialized event the first time the
  * "custom_settings" subtree finishes a settings_load pass. settings_commit for
  * this subtree runs at the end of every settings_load()/settings_load_subtree()
- * covering it: the boot load (where every persisted value has just been applied
- * by custom_settings_handle_set), and each later reload that
- * zmk_custom_setting_discard triggers to re-read one setting from flash. The
- * guard makes sure consumers get a single "settings are ready" signal at boot
- * and that the post-boot discard reloads - which run while holding
- * custom_settings_lock - never re-raise it (both avoiding a spurious event and
- * keeping the raise off the locked discard path). The first commit is always
- * the boot load: discard can only be reached from a Studio RPC, long after the
- * boot settings_load has run. */
+ * covering it; the first is the boot load, where every persisted value has just
+ * been applied by custom_settings_handle_set. The guard makes sure consumers get
+ * a single "settings are ready" signal even if a later full load commits again.
+ * Discard re-reads one record through settings_load_subtree_direct (see
+ * reload_setting_locked), which never commits. */
 static bool custom_settings_initialized;
 
 static int custom_settings_handle_commit(void) {

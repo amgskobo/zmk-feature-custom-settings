@@ -1,12 +1,15 @@
 import platform
-import shutil
+import os
+import tempfile
 import subprocess
 import unittest
 from pathlib import Path
 
 from dataclasses import dataclass, field
 
-THIS_DIR = Path(__file__).parent.resolve()
+from native_verifier import verify_native
+
+THIS_DIR = Path(__file__).resolve().parent.parent
 
 
 def run_west(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -40,17 +43,23 @@ class WestCommandsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.WEST_TOPDIR = Path(run_west(["topdir"]).stdout.strip())
-        cls.BUILD_DIR = cls.WEST_TOPDIR / "build"
+        requested_output = os.environ.get("OWNER_TEST_OUTPUT")
+        if requested_output:
+            cls.BUILD_DIR = Path(requested_output).resolve()
+            cls.BUILD_DIR.mkdir(parents=True, exist_ok=False)
+        else:
+            cls.BUILD_DIR = Path(tempfile.mkdtemp(prefix=THIS_DIR.name + "-tests-"))
+        print(f"Owner test output: {cls.BUILD_DIR}", flush=True)
 
     @unittest.skipUnless(
         platform.system() == "Linux", "zmk-test is only supported on Linux"
     )
     def test_zmk_test(self):
         test_build_dir = self.BUILD_DIR / THIS_DIR.name
-        shutil.rmtree(test_build_dir, ignore_errors=True)
 
         result = run_west(["zmk-test", "tests", "-m", ".", "-d", str(test_build_dir)])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        verify_native(test_build_dir, THIS_DIR / "tests")
         self.assertIn("PASS: test", result.stdout, result.stdout + result.stderr)
         self.assertIn("PASS: studio", result.stdout, result.stdout + result.stderr)
         self.assertNotIn("FAILED: ", result.stdout, result.stdout + result.stderr)
@@ -61,14 +70,24 @@ class WestCommandsTests(unittest.TestCase):
     def test_settings_kernel_boundaries(self):
         result = subprocess.run(
             ["bash", "tests/settings-boundary/run.sh"],
+            env={
+                **os.environ,
+                "CUSTOM_SETTINGS_NATIVE_ARTIFACTS": os.environ.get(
+                    "CUSTOM_SETTINGS_NATIVE_ARTIFACTS",
+                    str(self.BUILD_DIR / "settings-boundary"),
+                ),
+            },
             capture_output=True,
             text=True,
             cwd=THIS_DIR,
         )
+        (self.BUILD_DIR / "test_settings_kernel_boundaries.log").write_text(
+            result.stdout + result.stderr, encoding="utf-8"
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("Completed core boundary scenarios=8 repeats=3", result.stdout)
+        self.assertIn("Completed core boundary scenarios=10 repeats=3", result.stdout)
         self.assertIn(
-            "Completed features boundary scenarios=11 repeats=3", result.stdout
+            "Completed features boundary scenarios=16 repeats=3", result.stdout
         )
 
     def test_zmk_build(self):
@@ -146,9 +165,9 @@ class WestCommandsTests(unittest.TestCase):
                         "CONFIG_ZMK_CUSTOM_SETTINGS_PROTOBUF=y",
                         "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC=y",
                         "CONFIG_ZMK_CUSTOM_SETTINGS_ZMK_CONFIG_SAMPLES=y",
-                        # Feature gating P5: the whole point of this artifact - module
-                        # + Studio RPC on, all five optional features left at their
-                        # opt-in default (n). Each still has a Kconfig prompt (so
+                        # Feature gating: module + Studio RPC on, all five optional
+                        # features explicitly disabled by this fixture. Each still
+                        # has a Kconfig prompt (so
                         # Kconfig emits a "not set" comment rather than omitting the
                         # line entirely) - assert the comment form, not NotFound.
                         "# CONFIG_ZMK_CUSTOM_SETTINGS_LARGE_VALUES is not set",
@@ -250,10 +269,17 @@ class WestCommandsTests(unittest.TestCase):
         self, artifacts_and_expected_build_params: dict[str, ConfigAndDeviceTree]
     ):
 
-        for artifact in artifacts_and_expected_build_params.keys():
-            shutil.rmtree(self.BUILD_DIR / artifact, ignore_errors=True)
-
-        result = run_west(["zmk-build", "tests/zmk-config", "-q"])
+        result = run_west(
+            [
+                "zmk-build",
+                "tests/zmk-config",
+                "-q",
+                "-P",
+                "1",
+                "-d",
+                str(self.BUILD_DIR),
+            ]
+        )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
         for artifact, entries in artifacts_and_expected_build_params.items():

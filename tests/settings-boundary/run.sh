@@ -1,8 +1,16 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 set -euo pipefail
+
+if [[ -n ${CUSTOM_SETTINGS_NATIVE_ARTIFACTS:-} && ( -e "$CUSTOM_SETTINGS_NATIVE_ARTIFACTS" || -L "$CUSTOM_SETTINGS_NATIVE_ARTIFACTS" ) ]]; then
+    echo "Use a fresh CUSTOM_SETTINGS_NATIVE_ARTIFACTS directory; existing evidence is preserved" >&2
+    exit 2
+fi
 root="$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)"
 export ZEPHYR_BASE="${ZEPHYR_BASE:-$(west list zephyr -f '{abspath}')}"
+# Linker snippets are relative to Zephyr's include directory. A symlinked
+# base makes those paths resolve through its physical parent instead.
+export ZEPHYR_BASE="$(CDPATH='' cd -- "$ZEPHYR_BASE" && pwd -P)"
 zmk_root="${ZMK_ROOT:-$(west list zmk -f '{abspath}')}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT HUP INT TERM
@@ -15,17 +23,17 @@ for variant in core features; do
         exit 2
     fi
     features=OFF
-    cases=(control scope save discard reset discard-error persist-error missing)
+    cases=(control scope save discard reset discard-error persist-error missing queue-scalar memory-guard)
     if [ "$variant" = features ]; then
         features=ON
-        cases+=(array-error blob-error keyspace-error)
+        cases+=(array-error blob-error keyspace-error queue-array queue-blob queue-keyspace)
     fi
     args=()
     if [ -n "${CUSTOM_SETTINGS_SOURCE_DIR:-}" ]; then
         args+=(-DCUSTOM_SETTINGS_SOURCE_DIR="$CUSTOM_SETTINGS_SOURCE_DIR")
     fi
     if ! west build -p=always -b native_sim/native/64 -s "$root/tests/settings-boundary" \
-        -d "$work/$variant" -- -DZMK_ROOT="$zmk_root" -DZEPHYR_MODULES= \
+        -d "$work/$variant" -- -DZMK_ROOT="$zmk_root" -DWEST=OFF -DZEPHYR_MODULES= \
         -DSETTINGS_BOUNDARY_FEATURES="$features" "${args[@]}" \
         -DZephyr_DIR="$ZEPHYR_BASE/share/zephyr-package/cmake" > "$work/build.log" 2>&1; then
         cat "$work/build.log" >&2; exit 2

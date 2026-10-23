@@ -195,13 +195,14 @@ size_t zmk_custom_setting_large_pool_used(const struct zmk_custom_setting_large_
         return 0;
     }
 
+    /* A pure RAM walk: the memory guard alone, never the settings lock. */
     size_t used = 0;
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     for (const struct zmk_custom_setting *member = pool->members; member;
          member = member->state->_pool_next) {
         used += pool_member_extent(member);
     }
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
     return used;
 }
 

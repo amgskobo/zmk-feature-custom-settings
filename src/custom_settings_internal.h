@@ -39,17 +39,22 @@
  * take it too. */
 extern struct k_mutex custom_settings_lock;
 
-/* Runtime access takes the Zephyr settings lock before the state lock.
- * Recursive calls are
- * allowed; never take the state mutex directly.
- * The settings mutex is a tested Zephyr
- * compatibility dependency. */
+/* Storage/mutation and caller-callback paths take the Zephyr settings lock
+ * before the state lock. Recursive calls are allowed. The settings mutex is
+ * a tested Zephyr compatibility dependency. */
 void custom_settings_state_lock(void);
 void custom_settings_state_unlock(void);
 
+/* Pure RAM lookup/copy paths take only the state mutex. While holding this
+ * guard, never access settings storage, invoke a caller's callback, acquire
+ * the paired state guard or wait for another thread/work item. Readers may
+ * observe an applied record during a load; this is not a load-completion
+ * barrier or a whole-subtree transaction. */
+void custom_settings_memory_lock(void);
+void custom_settings_memory_unlock(void);
+
 /* Caller holds the paired guard. Reload this record, preserving h_set/read
- * errors and returning
- * -ENOENT for a missing expected record. */
+ * errors and returning -ENOENT for a missing expected record. */
 int reload_setting_locked(const struct zmk_custom_setting *setting);
 
 /*
@@ -352,3 +357,16 @@ struct read_into_context {
     int ret;
 };
 void read_into_visitor(const struct zmk_custom_setting_value *value, void *user_data);
+
+/* Call-scoped notification policy; all mutations still dispatch their core event. */
+int keyspace_write_blob_with_notification(const struct zmk_custom_setting *setting, const char *key,
+                                          const struct zmk_custom_setting_value *value,
+                                          enum zmk_custom_setting_write_mode mode,
+                                          bool suppress_notification);
+int keyspace_write_raw_payload_with_notification(const struct zmk_custom_setting *setting,
+                                                 const void *data, size_t size,
+                                                 enum zmk_custom_setting_write_mode mode,
+                                                 bool suppress_notification);
+int write_bytes_raw_with_notification(const struct zmk_custom_setting *setting, const void *data,
+                                      size_t size, enum zmk_custom_setting_write_mode mode,
+                                      bool suppress_notification);

@@ -74,8 +74,92 @@ static struct k_thread loader, writer;
 static bool pause_load, monitor_writer, writer_holds_state, present[2] = {true, true};
 static int32_t disk[2] = {20, 21};
 static int fail_save = -1, read_error, load_result = 99, writer_result = 99;
+/* Fails only the extra record with this storage name. */
+static const char *read_error_name;
 static unsigned saved[2], discarded, initialized;
 static const char *operation;
+
+/* A settings loader may wait for a synchronous handoff to sysworkq while
+ * holding settings_lock (e.g. ZMK's advertising commit). Queue the value
+ * consumer first to exercise that ordering with the real kernel locks. */
+static bool queue_cycle;
+static int queue_read_result = 99;
+K_SEM_DEFINE(queue_read_entered, 0, 1);
+
+static void queue_read(struct k_work *work) {
+    ARG_UNUSED(work);
+    CHECK(k_current_get() == &k_sys_work_q.thread);
+    k_sem_give(&queue_read_entered);
+    struct zmk_custom_setting_value readback;
+    if (!strcmp(operation, "queue-scalar") || !strcmp(operation, "memory-guard")) {
+        const struct zmk_custom_setting *setting =
+            zmk_custom_setting_find("boundary", "scalar_first");
+        CHECK(setting == first);
+        CHECK(zmk_custom_setting_read_by_key("boundary", "scalar_first", &readback) == 0);
+        CHECK(readback.type == ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32 &&
+              readback.int32_value == (!strcmp(operation, "memory-guard") ? 20 : 40));
+        CHECK(zmk_custom_setting_read_default(setting, &readback) == 0 &&
+              readback.int32_value == 10);
+        CHECK(!zmk_custom_setting_matches_default(setting) &&
+              !zmk_custom_setting_has_unsaved_value(setting));
+        int32_t raw = 0;
+        size_t size = 0;
+        enum zmk_custom_setting_value_type type;
+        CHECK(zmk_custom_setting_read_into(setting, &raw, sizeof(raw), &size, &type) == 0);
+        CHECK(raw == (!strcmp(operation, "memory-guard") ? 20 : 40) && size == sizeof(raw) &&
+              type == ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32);
+        CHECK(zmk_custom_setting_read_into(setting, &raw, sizeof(raw) - 1, NULL, NULL) ==
+              -EMSGSIZE);
+        CHECK(zmk_custom_setting_read_by_key("boundary", "absent", &readback) == -ENOENT);
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+    } else if (!strcmp(operation, "queue-array")) {
+        const struct zmk_custom_setting *view =
+            zmk_custom_setting_find_array_element("boundary", "array", 0);
+        CHECK(view != NULL && zmk_custom_setting_array_size(&array_setting) == 2);
+        CHECK(zmk_custom_setting_read_array_by_key("boundary", "array", 0, &readback) == 0 &&
+              readback.int32_value == 4);
+        /* Index views have no scalar default descriptor; array defaults are
+         * managed by the array API. */
+        CHECK(zmk_custom_setting_read_default(view, &readback) == -ENOENT);
+        CHECK(!zmk_custom_setting_has_unsaved_value(view));
+        CHECK(zmk_custom_setting_find_array_element("boundary", "array", 2) == NULL);
+        CHECK(zmk_custom_setting_read_array_by_key("boundary", "array", 2, &readback) == -ENOENT);
+    } else if (!strcmp(operation, "queue-blob") || !strcmp(operation, "queue-keyspace")) {
+        bool keyspace = !strcmp(operation, "queue-keyspace");
+        const struct zmk_custom_setting *setting = &blob_setting;
+        if (keyspace) {
+            CHECK(zmk_custom_settings_keyspace_find_for_key("boundary", "item/test") == &keys);
+            CHECK(zmk_custom_setting_keyspace_find(&keys, "item/missing") == NULL);
+            setting = zmk_custom_setting_find("boundary", "item/test");
+            CHECK(setting != NULL && !strcmp(zmk_custom_setting_public_key(setting), "item/test"));
+        }
+        size_t expected = keyspace ? 2 : 96, size = 0;
+        CHECK(zmk_custom_setting_value_size(setting, &size) == 0 && size == expected);
+        uint8_t raw[96];
+        enum zmk_custom_setting_value_type type;
+        CHECK(zmk_custom_setting_read_into(setting, raw, sizeof(raw), &size, &type) == 0 &&
+              size == expected && type == ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES);
+        for (size_t i = 0; i < size; i++) {
+            CHECK(raw[i] == 0x31);
+        }
+        CHECK(zmk_custom_setting_read_into(setting, raw, expected - 1, NULL, NULL) == -EMSGSIZE);
+        CHECK(!zmk_custom_setting_has_unsaved_value(setting));
+        int ret = zmk_custom_setting_read(setting, &readback);
+        if (keyspace) {
+            CHECK(ret == 0 && readback.size == 2 && readback.bytes_value[0] == 0x31 &&
+                  readback.bytes_value[1] == 0x31);
+        } else {
+            CHECK(ret == -EMSGSIZE);
+        }
+#endif
+    } else {
+        CHECK(false);
+    }
+    queue_read_result = 0;
+}
+static void handoff(struct k_work *work) { ARG_UNUSED(work); }
+K_WORK_DEFINE(queue_read_work, queue_read);
+K_WORK_DEFINE(handoff_work, handoff);
 
 static int observe(const zmk_event_t *event) {
     const struct zmk_custom_setting_changed *change = as_zmk_custom_setting_changed(event);
@@ -122,10 +206,13 @@ static ssize_t read_value(void *context, void *data, size_t size) {
     return size;
 }
 static ssize_t read_extra(void *context, void *data, size_t size) {
+    struct extra_record *record = context;
     if (read_error) {
         return read_error;
     }
-    struct extra_record *record = context;
+    if (read_error_name && !strcmp(record->name, read_error_name)) {
+        return -EIO;
+    }
     CHECK(size <= record->size);
     memcpy(data, record->data, size);
     return size;
@@ -156,6 +243,14 @@ static int backend_load(struct settings_store *store, const struct settings_load
                 return ret;
             }
         }
+    }
+    if (queue_cycle) {
+        queue_cycle = false;
+        CHECK(k_work_submit(&queue_read_work) > 0);
+        CHECK(k_work_submit(&handoff_work) > 0);
+        struct k_work_sync sync;
+        /* false also means success when the handoff already completed. */
+        k_work_flush(&handoff_work, &sync);
     }
     return 0;
 }
@@ -255,6 +350,56 @@ static void race(void) {
     CHECK(value(second) == 21 && disk[1] == 21 && present[1]);
 }
 
+static void queue_cycle_case(void) {
+    disk[0] = 40;
+    disk[1] = 41;
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+    if (!strcmp(operation, "queue-array")) {
+        const struct zmk_custom_setting *view =
+            zmk_custom_setting_find_array_element("boundary", "array", 0);
+        memory(view, 4);
+        CHECK(zmk_custom_setting_save(&array_setting) == 0);
+        memory(view, 7);
+    } else if (!strcmp(operation, "queue-blob") || !strcmp(operation, "queue-keyspace")) {
+        bool keyspace = !strcmp(operation, "queue-keyspace");
+        const struct zmk_custom_setting *setting = &blob_setting;
+        if (keyspace) {
+            CHECK(zmk_custom_setting_keyspace_create(
+                      &keys, "item/test", &ZMK_CUSTOM_SETTING_VALUE_BYTES(0x31, 0x31),
+                      ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &setting) == 0);
+        }
+        uint8_t bytes[96];
+        memset(bytes, 0x31, sizeof(bytes));
+        size_t size = keyspace ? 2 : sizeof(bytes);
+        CHECK(zmk_custom_setting_write_bytes(setting, bytes, size,
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == 0);
+        memset(bytes, 0x41, sizeof(bytes));
+        CHECK(zmk_custom_setting_write_bytes(setting, bytes, size,
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY) == 0);
+    }
+#endif
+    queue_cycle = true;
+    k_thread_create(&loader, load_stack, K_THREAD_STACK_SIZEOF(load_stack), load_thread, NULL, NULL,
+                    NULL, 5, 0, K_NO_WAIT);
+    int joined = k_thread_join(&loader, K_MSEC(200));
+    printk("queue=%s joined=%d read=%d time=%lld\n", operation, joined, queue_read_result,
+           k_uptime_get());
+    CHECK(joined == 0 && load_result == 0 && queue_read_result == 0);
+    CHECK(value(first) == 40 && value(second) == 41);
+}
+
+static void memory_guard_case(void) {
+    CHECK(k_mutex_lock(&custom_settings_lock, K_FOREVER) == 0);
+    CHECK(k_work_submit(&queue_read_work) > 0);
+    CHECK(k_sem_take(&queue_read_entered, K_MSEC(100)) == 0);
+    CHECK(queue_read_result == 99); /* The RAM read still serializes with state mutation. */
+    CHECK(k_mutex_unlock(&custom_settings_lock) == 0);
+    struct k_work_sync sync;
+    k_work_flush(&queue_read_work, &sync);
+    CHECK(queue_read_result == 0 && value(first) == 20 && value(second) == 21);
+    printk("PASS memory guard retains state serialization time=%lld\n", k_uptime_get());
+}
+
 static void controls(void) {
     memory(first, 30);
     CHECK(zmk_custom_setting_discard(first) == 0 && value(first) == 20);
@@ -349,6 +494,17 @@ static void array_error(void) {
     CHECK(value(view) == 8 && zmk_custom_setting_has_unsaved_value(view));
     fail_extra = false;
     CHECK(zmk_custom_setting_save(array) == 0 && !zmk_custom_setting_has_unsaved_value(view));
+    /* A read failure on a later element still reports the earlier ones it restored. */
+    const struct zmk_custom_setting *second =
+        zmk_custom_setting_find_array_element("boundary", "array", 1);
+    memory(view, 9);
+    memory(second, 10);
+    unsigned before = discarded;
+    read_error_name = "custom_settings/boundary/array/1";
+    CHECK(zmk_custom_setting_discard(array) == -EIO);
+    CHECK(value(view) == 8 && value(second) == 10 && discarded == before + 1);
+    read_error_name = NULL;
+    CHECK(zmk_custom_setting_discard(array) == 0 && value(second) == 5);
     printk("PASS array read/save failure preserves values/dirty/size and retries time=%lld\n",
            k_uptime_get());
 }
@@ -399,6 +555,10 @@ int main(void) {
     CHECK(operation != NULL);
     if (!strcmp(operation, "control")) {
         controls();
+    } else if (!strcmp(operation, "queue-scalar")) {
+        queue_cycle_case();
+    } else if (!strcmp(operation, "memory-guard")) {
+        memory_guard_case();
     } else if (!strcmp(operation, "scope")) {
         scopes();
     } else if (!strcmp(operation, "discard-error")) {
@@ -408,6 +568,9 @@ int main(void) {
     } else if (!strcmp(operation, "missing")) {
         missing();
 #if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+    } else if (!strcmp(operation, "queue-array") || !strcmp(operation, "queue-blob") ||
+               !strcmp(operation, "queue-keyspace")) {
+        queue_cycle_case();
     } else if (!strcmp(operation, "array-error")) {
         array_error();
     } else if (!strcmp(operation, "blob-error")) {

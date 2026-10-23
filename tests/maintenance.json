@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "owner": "zmk-custom-settings-fork",
+  "supported_cores": [
+    "dya"
+  ],
+  "unsupported_core_status": "NOT APPLICABLE",
+  "commands": [
+    "python3 -m unittest discover -v -s tests -p test_owner.py",
+    "bash tests/run-web.sh"
+  ],
+  "coverage_map": "tests/README.md",
+  "preserved_assertions": "Relocated fixtures retain their prior assertions; no snapshot auto-accept or unique assertion removal.",
+  "execution": {
+    "quick": "All behavioral scenarios once; sanitizer variants where supported.",
+    "full": "Same scenarios plus relevant optimization, ABI, role, kernel and supported-core checks.",
+    "outputs": "Use a fresh evidence directory; existing evidence is never overwritten."
+  },
+  "gaps": [
+    "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence."
+  ],
+  "native_verification": "tests/native_verifier.py: actual exit, registered test completion, raw ordered logs, unchanged snapshots, identical binary repeated three times.",
+  "regression_fixtures": [
+    {
+      "fixture": "tests/support/custom_settings_handler_assertions_2.inc: custom_settings_quiet_operations (inside checked public_suppress init)",
+      "contract": "Quiet scalar, small/large raw, typed/raw keyspace and save retain exact registry values and synchronous core events; real Studio queue submissions are zero for quiet and exactly one for ordinary; independent nested writer still notifies; existing observed suppression snapshot count preserved.",
+      "negative_control": "tests/quiet_notify_negative_control.py removes only the Studio quiet-event guard in a separate owner copy; unchanged owner native fixture must fail.",
+      "limits": "Queue submission selection only; legacy global suppression and physical transport congestion/delivery remain separate gaps."
+    }
+  ]
+}

@@ -23,7 +23,7 @@ if(CONFIG_ZMK_CUSTOM_SETTINGS)
     endif()
 
     if(CONFIG_ZMK_CUSTOM_SETTINGS_TEST)
-        target_sources(app PRIVATE src/test/custom_settings_test.c)
+        target_sources(app PRIVATE tests/ztest/custom_settings_test.c)
     endif()
 
     if(CONFIG_ZMK_CUSTOM_SETTINGS_ZMK_CONFIG_SAMPLES)

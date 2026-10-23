@@ -14,6 +14,8 @@
 #include <zephyr/sys/util.h>
 #include <zmk/event_manager.h>
 
+#define ZMK_CUSTOM_SETTINGS_HAS_QUIET_WRITES 1
+
 #define ZMK_CUSTOM_SETTING_SOURCE_LOCAL 0U
 #define ZMK_CUSTOM_SETTING_SOURCE_ALL UINT32_MAX
 #define ZMK_CUSTOM_SETTING_ARRAY_NONE UINT32_MAX
@@ -372,6 +374,8 @@ struct zmk_custom_setting_changed {
     const struct zmk_custom_setting *setting;
     enum zmk_custom_setting_changed_kind kind;
     uint32_t source;
+    /* This event still reaches core consumers; only its Studio notification is omitted. */
+    bool suppress_studio_notification;
 };
 
 ZMK_EVENT_DECLARE(zmk_custom_setting_changed);
@@ -852,6 +856,14 @@ int zmk_custom_setting_deserialize_rpc_value(const struct zmk_custom_setting *se
 int zmk_custom_setting_write(const struct zmk_custom_setting *setting,
                              const struct zmk_custom_setting_value *value,
                              enum zmk_custom_setting_write_mode mode);
+/* Same mutation and synchronous core event as write(), with only this call's
+ * Studio notification omitted. A caller coalescing notifications must later
+ * raise an ordinary zmk_custom_setting_changed event for the current registry
+ * value; it must never replay an earlier value through write(). No thread-global
+ * suppression state is changed. Supports the same setting kinds as write(). */
+int zmk_custom_setting_write_quiet(const struct zmk_custom_setting *setting,
+                                   const struct zmk_custom_setting_value *value,
+                                   enum zmk_custom_setting_write_mode mode);
 int zmk_custom_setting_write_by_key(const char *custom_subsystem_id, const char *key,
                                     const struct zmk_custom_setting_value *value,
                                     enum zmk_custom_setting_write_mode mode);
@@ -890,6 +902,8 @@ int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *array_se
 
 /* Save the current memory value to persistent storage. */
 int zmk_custom_setting_save(const struct zmk_custom_setting *setting);
+/* Atomic save of the current memory value, with a quiet core SAVED event. */
+int zmk_custom_setting_save_quiet(const struct zmk_custom_setting *setting);
 /* Discard unsaved memory/temporary changes and restore the persistent/default value. */
 int zmk_custom_setting_discard(const struct zmk_custom_setting *setting);
 /* Erase the persistent value and restore the default value. */
@@ -944,7 +958,10 @@ int zmk_custom_setting_set_default(const struct zmk_custom_setting *setting,
 /* Callback invoked with the effective value while the settings lock is held.
  * Runs synchronously; keep it short, copy out anything needed, and do not
  * call back into other zmk_custom_setting_* functions for the same or other
- * settings from within it. */
+ * settings from within it. Never wait in it - not for I/O, another thread or a
+ * host-paced stream: Zephyr's settings lock is held, so every save, load and
+ * RAM read of any setting stalls behind it, system work queue included. To
+ * send a value out slowly, copy it with zmk_custom_setting_read_into first. */
 typedef void (*zmk_custom_setting_value_visitor_t)(const struct zmk_custom_setting_value *value,
                                                    void *user_data);
 
@@ -968,9 +985,10 @@ int zmk_custom_setting_value_size(const struct zmk_custom_setting *setting, size
 /* Visitor invoked with a pointer straight into a BYTES/STRING setting's
  * backing region (no copy) while the settings lock is held. Runs
  * synchronously; keep it short and do not call back into other
- * zmk_custom_setting_* functions from within it. Lets the streaming RPC
- * value-encode callback write a value of any size straight to the output
- * stream with no intermediate copy. */
+ * zmk_custom_setting_* functions from within it. Never wait in it: the
+ * settings lock is held (see zmk_custom_setting_value_visitor_t), so it suits a
+ * memcpy or a hash, not an output stream whose pace the host sets. The Studio
+ * RPC encoder copies with zmk_custom_setting_read_into instead. */
 typedef void (*zmk_custom_setting_raw_bytes_visitor_t)(const uint8_t *data, size_t size,
                                                        void *user_data);
 
@@ -988,6 +1006,9 @@ int zmk_custom_setting_with_large_raw_bytes(const struct zmk_custom_setting *set
  * any truncation to CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE. */
 int zmk_custom_setting_write_bytes(const struct zmk_custom_setting *setting, const void *data,
                                    size_t size, enum zmk_custom_setting_write_mode mode);
+/* Raw-value counterpart of write_quiet(), including keyspace payloads. */
+int zmk_custom_setting_write_bytes_quiet(const struct zmk_custom_setting *setting, const void *data,
+                                         size_t size, enum zmk_custom_setting_write_mode mode);
 
 /* Typed scalar convenience wrappers over read_into/write. Return -EINVAL if
  * the setting is not of the matching type. */

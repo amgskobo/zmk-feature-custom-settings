@@ -1,3 +1,4 @@
+#include "../support/init_result.h"
 /*
  * Copyright (c) 2026 cormoran
  *
@@ -1931,6 +1932,15 @@ static int test_keyspace_lifecycle(void) {
     return 0;
 }
 
+static int test_macro_slot_of(const struct zmk_custom_setting *setting) {
+    for (uint32_t i = 0; i < test_macro_keyspace.max_entries; i++) {
+        if (&test_macro_keyspace.slots[i].setting == setting) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
 /*
  * Regression for "No keyspace registered for this key" on CreateSetting.
  *
@@ -2055,6 +2065,36 @@ static int test_record_settings(void) {
     ret = zmk_custom_setting_record_decode(&speed_only_schema, encoded, encoded_size, &speed_only);
     if (ret < 0 || speed_only.speed != 42 || strcmp(speed_only.label, "kept") != 0) {
         LOG_ERR("Decoding with a narrower schema did not skip the unknown field correctly");
+        return -EINVAL;
+    }
+    /* Unknown complete fields remain forward-compatible; a dangling tag is
+     * an incomplete header, even when all preceding fields were valid. */
+    const uint8_t unknown_field[] = {ZMK_CUSTOM_SETTING_RECORD_VERSION, 0xf0, 1, 0xaa};
+    ret = zmk_custom_setting_record_decode(&speed_only_schema, unknown_field, sizeof(unknown_field),
+                                           &speed_only);
+    if (ret < 0 || speed_only.speed != 42 || strcmp(speed_only.label, "kept") != 0) {
+        LOG_ERR("Complete unknown record field did not preserve defaults");
+        return -EINVAL;
+    }
+    const uint8_t truncated_header[] = {ZMK_CUSTOM_SETTING_RECORD_VERSION, 0xf0};
+    ret = zmk_custom_setting_record_decode(&speed_only_schema, truncated_header,
+                                           sizeof(truncated_header), &speed_only);
+    if (ret != -EINVAL) {
+        LOG_ERR("Truncated record header accepted: %d", ret);
+        return -EINVAL;
+    }
+    encoded[encoded_size] = 0xf0;
+    ret = zmk_custom_setting_record_decode(&speed_only_schema, encoded, encoded_size + 1,
+                                           &speed_only);
+    if (ret != -EINVAL) {
+        LOG_ERR("Dangling record tag after valid fields accepted: %d", ret);
+        return -EINVAL;
+    }
+    const uint8_t truncated_value[] = {ZMK_CUSTOM_SETTING_RECORD_VERSION, 0xf0, 2, 0xaa};
+    ret = zmk_custom_setting_record_decode(&speed_only_schema, truncated_value,
+                                           sizeof(truncated_value), &speed_only);
+    if (ret != -EINVAL) {
+        LOG_ERR("Truncated unknown record payload accepted: %d", ret);
         return -EINVAL;
     }
     LOG_INF("PASS: custom_settings_record_schema_evolution speed=42 label=kept");
@@ -2946,4 +2986,4 @@ static int custom_settings_test_init(void) {
 #endif
 }
 
-SYS_INIT(custom_settings_test_init, APPLICATION, 99);
+OWNER_CHECKED_SYS_INIT(custom_settings_test_init, APPLICATION, 99);

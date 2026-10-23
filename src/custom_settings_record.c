@@ -112,7 +112,8 @@ int zmk_custom_setting_record_decode(const struct zmk_custom_setting_record_sche
         pos += len;
     }
 
-    return 0;
+    /* A single trailing tag cannot describe a complete TLV header. */
+    return pos == data_size ? 0 : -EINVAL;
 }
 
 static int validate_field(const struct zmk_custom_setting_record_field *field,

@@ -151,9 +151,9 @@ zmk_custom_setting_find_array_element(const char *custom_subsystem_id, const cha
         return NULL;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     struct zmk_custom_setting *view = array_view_acquire(array_setting, index);
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return view;
 }
@@ -204,9 +204,9 @@ uint32_t zmk_custom_setting_array_size(const struct zmk_custom_setting *setting)
         return 0;
     }
 
-    custom_settings_state_lock();
+    custom_settings_memory_lock();
     uint32_t array_size = setting->array_state->size;
-    custom_settings_state_unlock();
+    custom_settings_memory_unlock();
 
     return array_size;
 }

@@ -970,7 +970,7 @@ behavior id settings where supported.
 
 ```bash
 # Run unit test + build test and verify the results
-python3 -m unittest
+python3 -m unittest discover -s tests -p test_owner.py
 
 # Run build test directly
 west zmk-build tests/zmk-config
