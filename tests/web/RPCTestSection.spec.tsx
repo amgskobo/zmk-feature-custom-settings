@@ -10,8 +10,8 @@ import {
   parseSettingsExportJson,
   settingsExportToJson,
   settingToExportedSetting,
-} from "../src/settingsJson";
-import { RPCTestSection, SUBSYSTEM_IDENTIFIER } from "../src/App";
+} from "../../web/src/settingsJson";
+import { RPCTestSection, SUBSYSTEM_IDENTIFIER } from "../../web/src/App";
 import {
   Notification,
   Request,
@@ -20,7 +20,7 @@ import {
   SettingConfidentiality,
   SettingNotificationKind,
   SettingPermission,
-} from "../src/proto/cormoran/zmk/custom_settings/custom_settings";
+} from "../../web/src/proto/cormoran/zmk/custom_settings/custom_settings";
 
 jest.mock("@zmkfirmware/zmk-studio-ts-client", () => ({
   call_rpc: jest.fn(),
@@ -51,33 +51,33 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       expect(
-        screen.getByRole("heading", { name: "Settings" })
+        screen.getByRole("heading", { name: "Settings" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Filter" })
+        screen.getByRole("heading", { name: "Filter" }),
       ).toBeInTheDocument();
       expect(screen.getByLabelText(/Filter Subsystem/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/Filter Key/i)).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Device Settings" })
+        screen.getByRole("heading", { name: "Device Settings" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByText(/Settings load automatically/i)
+        screen.getByText(/Settings load automatically/i),
       ).toBeInTheDocument();
       await waitFor(() => expect(call_rpc).toHaveBeenCalledTimes(1));
       expect(screen.getByLabelText(/Settings JSON/i)).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Export JSON" })
+        screen.getByRole("button", { name: "Export JSON" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Import JSON" })
+        screen.getByRole("button", { name: "Import JSON" }),
       ).toBeInTheDocument();
       expect(
-        screen.queryByRole("heading", { name: "Update Value" })
+        screen.queryByRole("heading", { name: "Update Value" }),
       ).not.toBeInTheDocument();
     });
 
@@ -89,7 +89,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -98,7 +98,7 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "int_value" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
 
@@ -107,25 +107,25 @@ describe("RPCTestSection Component", () => {
       });
       expect(updateValueHeading).toBeInTheDocument();
       const updateValuePanel = updateValueHeading.closest(
-        "section"
+        "section",
       ) as HTMLElement;
       expect(within(updateValuePanel).getByText("int32")).toBeInTheDocument();
       expect(screen.queryByText("Array Index")).not.toBeInTheDocument();
       expect(screen.queryByText("Array Size")).not.toBeInTheDocument();
       const input = within(updateValuePanel).getByLabelText(
-        /Value/i
+        /Value/i,
       ) as HTMLInputElement;
       expect(input.value).toBe("42");
       expect(
-        within(updateValuePanel).queryByRole("button", { name: "Push Back" })
+        within(updateValuePanel).queryByRole("button", { name: "Push Back" }),
       ).not.toBeInTheDocument();
       expect(
-        within(updateValuePanel).queryByRole("button", { name: "Pop Back" })
+        within(updateValuePanel).queryByRole("button", { name: "Pop Back" }),
       ).not.toBeInTheDocument();
 
       await userEvent.click(settingButton);
       expect(
-        screen.queryByRole("heading", { name: "Update Value" })
+        screen.queryByRole("heading", { name: "Update Value" }),
       ).not.toBeInTheDocument();
     });
 
@@ -137,7 +137,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -156,25 +156,25 @@ describe("RPCTestSection Component", () => {
       const settingButtons = await screen.findAllByRole(
         "button",
         { name: "int_value" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       expect(settingButtons).toHaveLength(1);
       expect(
-        (settingButtons[0].closest("td") as HTMLTableCellElement).rowSpan
+        (settingButtons[0].closest("td") as HTMLTableCellElement).rowSpan,
       ).toBe(2);
 
       const table = screen.getByRole("table");
       expect(
-        within(table).getByRole("columnheader", { name: "Setting" })
+        within(table).getByRole("columnheader", { name: "Setting" }),
       ).toBeInTheDocument();
       expect(
-        within(table).getByRole("columnheader", { name: "Source" })
+        within(table).getByRole("columnheader", { name: "Source" }),
       ).toBeInTheDocument();
       expect(
-        within(table).getByRole("columnheader", { name: "Value" })
+        within(table).getByRole("columnheader", { name: "Value" }),
       ).toBeInTheDocument();
       expect(
-        within(table).getByRole("columnheader", { name: "Unsaved" })
+        within(table).getByRole("columnheader", { name: "Unsaved" }),
       ).toBeInTheDocument();
       expect(within(table).getByText("local")).toBeInTheDocument();
       expect(within(table).getByText("2")).toBeInTheDocument();
@@ -191,7 +191,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -214,13 +214,13 @@ describe("RPCTestSection Component", () => {
       // is the table heading instead.
       await screen.findByRole("button", { name: "brightness" });
       expect(
-        screen.getByRole("heading", { level: 4, name: "test" })
+        screen.getByRole("heading", { level: 4, name: "test" }),
       ).toBeInTheDocument();
 
       const table = screen.getByRole("table");
       for (const name of ["Confidentiality", "Read", "Write", "Constraints"]) {
         expect(
-          within(table).getByRole("columnheader", { name })
+          within(table).getByRole("columnheader", { name }),
         ).toBeInTheDocument();
       }
       expect(within(table).getByText("public")).toBeInTheDocument();
@@ -237,7 +237,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -256,17 +256,17 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "array_value[0]" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
 
       expect(screen.getByText("Array Index")).toBeInTheDocument();
       expect(screen.getByText("Array Size")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Push Back" })
+        screen.getByRole("button", { name: "Push Back" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Pop Back" })
+        screen.getByRole("button", { name: "Pop Back" }),
       ).toBeInTheDocument();
     });
 
@@ -278,7 +278,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -290,7 +290,7 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "int_value" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
       expect(screen.getByLabelText(/^Source$/i)).toHaveValue("2");
@@ -314,7 +314,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -326,12 +326,12 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "int_value" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
       await userEvent.selectOptions(
         screen.getByLabelText(/^Source$/i),
-        `${0xffffffff}`
+        `${0xffffffff}`,
       );
       await userEvent.click(screen.getByRole("button", { name: "Write" }));
 
@@ -353,7 +353,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(call_rpc).toHaveBeenCalledTimes(1));
@@ -374,7 +374,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(call_rpc).toHaveBeenCalledTimes(1));
@@ -383,7 +383,7 @@ describe("RPCTestSection Component", () => {
       await userEvent.type(screen.getByLabelText(/^Subsystem$/i), "test");
       await userEvent.type(screen.getByLabelText(/^Key$/i), "macro/my-macro-1");
       const createValueInput = screen.getByLabelText(
-        "Value"
+        "Value",
       ) as HTMLInputElement;
       await userEvent.clear(createValueInput);
       await userEvent.type(createValueInput, "5");
@@ -407,7 +407,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -419,7 +419,7 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "macro/my-macro-1" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
       await userEvent.click(screen.getByRole("button", { name: "Delete" }));
@@ -441,7 +441,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -467,7 +467,7 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "mode" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
 
@@ -475,10 +475,10 @@ describe("RPCTestSection Component", () => {
       const select = within(panel).getByLabelText("Value") as HTMLSelectElement;
       expect(select.tagName).toBe("SELECT");
       expect(
-        within(select).getByRole("option", { name: "Low" })
+        within(select).getByRole("option", { name: "Low" }),
       ).toBeInTheDocument();
       expect(
-        within(select).getByRole("option", { name: "High" })
+        within(select).getByRole("option", { name: "High" }),
       ).toBeInTheDocument();
 
       await userEvent.selectOptions(select, "2");
@@ -497,7 +497,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -525,12 +525,12 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "mode" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
 
       expect(
-        screen.getByText(/Option list may be truncated/i)
+        screen.getByText(/Option list may be truncated/i),
       ).toBeInTheDocument();
     });
 
@@ -542,7 +542,7 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       await waitFor(() => expect(mockZMKApp.onNotification).toHaveBeenCalled());
@@ -565,7 +565,7 @@ describe("RPCTestSection Component", () => {
       const settingButton = await screen.findByRole(
         "button",
         { name: "level" },
-        { timeout: 2000 }
+        { timeout: 2000 },
       );
       await userEvent.click(settingButton);
 
@@ -601,16 +601,16 @@ describe("RPCTestSection Component", () => {
       render(
         <ZMKAppProvider value={mockZMKApp}>
           <RPCTestSection />
-        </ZMKAppProvider>
+        </ZMKAppProvider>,
       );
 
       expect(
-        screen.getByText(/Subsystem "cormoran_custom_settings" not found/i)
+        screen.getByText(/Subsystem "cormoran_custom_settings" not found/i),
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          /Make sure your firmware includes the custom settings module/i
-        )
+          /Make sure your firmware includes the custom settings module/i,
+        ),
       ).toBeInTheDocument();
     });
   });
@@ -629,7 +629,7 @@ function emptyStatusResponse() {
     custom: {
       call: {
         payload: Response.encode(
-          Response.create({ status: { affectedCount: 0, message: "OK" } })
+          Response.create({ status: { affectedCount: 0, message: "OK" } }),
         ).finish(),
       },
     },
@@ -638,7 +638,7 @@ function emptyStatusResponse() {
 
 function emitListItem(
   mockZMKApp: ReturnType<typeof createConnectedMockZMKApp>,
-  setting: Setting
+  setting: Setting,
 ) {
   const subscription = (mockZMKApp.onNotification as jest.Mock).mock
     .calls[0][0];
@@ -650,7 +650,7 @@ function emitListItem(
           kind: SettingNotificationKind.SETTING_NOTIFICATION_KIND_LIST_ITEM,
           setting,
         },
-      })
+      }),
     ).finish(),
   });
 }
@@ -693,8 +693,8 @@ describe("settings JSON conversion", () => {
             },
           },
         },
-        () => "test"
-      )
+        () => "test",
+      ),
     ).toEqual({
       customSubsystemId: "test",
       key: "array_value",
@@ -736,7 +736,7 @@ describe("settings JSON conversion", () => {
     };
     const json = settingsExportToJson(
       [arraySetting, arraySetting1],
-      () => "test"
+      () => "test",
     );
     const parsed = JSON.parse(json);
 

@@ -15,15 +15,15 @@ all sources that match the selected scope.
 ## Commands
 
 ```bash
-npm install
-npm run generate
+npm ci
 npm run dev
 npm test
 npm run build
 ```
 
 `npm run generate` runs `buf generate` and writes protobuf TypeScript types under
-`src/proto/`.
+`src/proto/`. Tests, watch/coverage modes, development and builds generate these
+types before use, including in a fresh checkout.
 
 ## Project Structure
 
@@ -42,3 +42,13 @@ test/
 ```
 
 The protobuf schemas live under `../proto/cormoran/zmk/custom_settings/`.
+
+## Console privacy
+
+Console failures include a fixed operation label and an allowlisted error category.
+Messages, stacks, causes, arbitrary error names, profile/device names, addresses,
+setting keys, prefixes, and values are not console arguments. UI errors and
+intentional setting/profile displays retain their existing behavior. Custom
+Settings list diagnostics summarize counts, elapsed milliseconds, and a fixed
+completion reason; individual RPC payloads and notifications are not logged.
+The Vite plugin also sanitizes executable console output in the two locked Studio SDKs. New SDK log sites stop the build for review; both SDKs are excluded from development prebundling so the same transform applies in development and production. Browser-generated diagnostics and unrelated browser extensions are outside this application's control.

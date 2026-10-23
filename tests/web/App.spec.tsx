@@ -2,8 +2,8 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { setupZMKMocks } from "@cormoran/zmk-studio-react-hook/testing";
 import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
-import App from "../src/App";
-import { Response } from "../src/proto/cormoran/zmk/custom_settings/custom_settings";
+import App from "../../web/src/App";
+import { Response } from "../../web/src/proto/cormoran/zmk/custom_settings/custom_settings";
 
 // Mock the ZMK client
 jest.mock("@zmkfirmware/zmk-studio-ts-client", () => ({
@@ -66,13 +66,13 @@ describe("App Component", () => {
 
       await waitFor(() => {
         expect(
-          screen.getByText(/Connected to: Test Keyboard/i)
+          screen.getByText(/Connected to: Test Keyboard/i),
         ).toBeInTheDocument();
       });
 
       expect(screen.getByText(/Disconnect/i)).toBeInTheDocument();
       expect(
-        screen.getByRole("heading", { name: "Settings" })
+        screen.getByRole("heading", { name: "Settings" }),
       ).toBeInTheDocument();
     });
   });
@@ -83,7 +83,7 @@ function emptyStatusResponse() {
     custom: {
       call: {
         payload: Response.encode(
-          Response.create({ status: { affectedCount: 0, message: "OK" } })
+          Response.create({ status: { affectedCount: 0, message: "OK" } }),
         ).finish(),
       },
     },

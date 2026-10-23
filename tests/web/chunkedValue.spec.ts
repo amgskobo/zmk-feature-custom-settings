@@ -1,10 +1,10 @@
-import { writeValueChunked } from "../src/chunkedValue";
+import { writeValueChunked } from "../../web/src/chunkedValue";
 import {
   Request,
   Response,
   SettingRef,
   SettingWriteMode,
-} from "../src/proto/cormoran/zmk/custom_settings/custom_settings";
+} from "../../web/src/proto/cormoran/zmk/custom_settings/custom_settings";
 
 const ref: SettingRef = { key: "large_bytes" };
 
@@ -42,7 +42,7 @@ describe("chunked large-value transfer", () => {
       callRPC,
       ref,
       value,
-      SettingWriteMode.SETTING_WRITE_MODE_PERSIST
+      SettingWriteMode.SETTING_WRITE_MODE_PERSIST,
     );
 
     expect(declaredTotal).toBe(value.length);
@@ -61,8 +61,8 @@ describe("chunked large-value transfer", () => {
         callRPC,
         ref,
         makeValue(200),
-        SettingWriteMode.SETTING_WRITE_MODE_PERSIST
-      )
+        SettingWriteMode.SETTING_WRITE_MODE_PERSIST,
+      ),
     ).rejects.toThrow("Unlock required");
   });
 });

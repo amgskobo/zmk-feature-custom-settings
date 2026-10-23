@@ -1,3 +1,4 @@
+import { errorKind } from "./logPrivacy";
 import { Fragment, useContext, useEffect, useState } from "react";
 import "./App.css";
 import { connect as serial_connect } from "@zmkfirmware/zmk-studio-ts-client/transport/serial";
@@ -15,7 +16,6 @@ import {
   SettingConstraint,
   SettingMeta,
   SettingPermission,
-  SettingRef,
   SettingScope,
   SettingScalarValue,
   SettingValue,
@@ -208,24 +208,12 @@ export function RPCTestSection() {
 
     const service = new ZMKCustomSubsystem(connection, subsystem.index);
     const payload = Request.encode(request).finish();
-    console.debug("[custom-settings] RPC request", {
-      request: requestSummary(request),
-      payloadSize: payload.length,
-      subsystemIndex: subsystem.index,
-    });
     const responsePayload = await service.callRPC(payload);
     if (!responsePayload) {
-      console.debug("[custom-settings] RPC empty response", {
-        request: requestSummary(request),
-      });
       throw new Error("Empty response");
     }
 
     const decoded = Response.decode(responsePayload);
-    console.debug("[custom-settings] RPC response", {
-      response: responseSummary(decoded),
-      payloadSize: responsePayload.length,
-    });
     return decoded;
   };
 
@@ -252,7 +240,7 @@ export function RPCTestSection() {
         setResponse(`Error: ${resp.error.message}`);
       }
     } catch (error) {
-      console.error("RPC call failed:", error);
+      console.error("RPC call failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -270,8 +258,11 @@ export function RPCTestSection() {
   ): Promise<Setting[]> => {
     if (!zmkApp || !subsystem) return [];
 
-    console.debug("[custom-settings] list start", {
-      scope: scopeSummary(requestScope),
+    const startedAt = performance.now();
+    let decodeFailures = 0;
+    let completionReason = "request-failed";
+    console.info("[custom-settings] list start", {
+      allSources: scopeTargetsAll(requestScope),
       requireMeta: includeMeta,
       requireDefault: includeDefault,
     });
@@ -295,11 +286,7 @@ export function RPCTestSection() {
         clearTimeout(quietTimeout);
         quietTimeout = undefined;
       }
-      console.debug("[custom-settings] list completion resolved", {
-        collected: collected.length,
-        expectedCount,
-        reason,
-      });
+      completionReason = reason;
       resolveList();
     };
 
@@ -308,11 +295,6 @@ export function RPCTestSection() {
         clearTimeout(quietTimeout);
       }
       quietTimeout = setTimeout(() => {
-        console.debug("[custom-settings] list quiet timeout", {
-          collected: collected.length,
-          expectedCount,
-          timeoutMs: LIST_NOTIFICATION_TIMEOUT_MS,
-        });
         completeList("quiet-timeout");
       }, LIST_NOTIFICATION_TIMEOUT_MS);
     };
@@ -321,23 +303,15 @@ export function RPCTestSection() {
       type: "custom",
       subsystemIndex: subsystem.index,
       callback: (customNotification) => {
-        console.debug("[custom-settings] custom notification", {
-          subsystemIndex: customNotification.subsystemIndex,
-          payloadSize: customNotification.payload.length,
-        });
         let notification;
         try {
           notification = SettingsNotification.decode(
             customNotification.payload
           );
-        } catch (error) {
-          console.debug("[custom-settings] notification decode failed", error);
+        } catch {
+          decodeFailures++;
           return;
         }
-        console.debug(
-          "[custom-settings] decoded notification",
-          notificationSummary(notification)
-        );
         if (
           notification.setting?.kind ===
             SettingNotificationKind.SETTING_NOTIFICATION_KIND_LIST_ITEM &&
@@ -376,10 +350,6 @@ export function RPCTestSection() {
       }
       expectedCount = resp.status?.affectedCount;
 
-      console.debug(
-        "[custom-settings] list RPC accepted",
-        responseSummary(resp)
-      );
       if (!waitForQuiet && expectedCount !== undefined) {
         if (collected.length >= expectedCount) {
           completeList("expected-count");
@@ -393,9 +363,13 @@ export function RPCTestSection() {
       if (quietTimeout) {
         clearTimeout(quietTimeout);
       }
-      console.debug("[custom-settings] list complete", {
+      // The reason is one of this file's fixed literals; the console guard
+      // keeps only the first string argument.
+      console.info(`[custom-settings] list complete: ${completionReason}`, {
         collected: collected.length,
         expectedCount,
+        decodeFailures,
+        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
       });
     }
 
@@ -415,7 +389,7 @@ export function RPCTestSection() {
       setJsonText(JSON.stringify(exported, null, 2));
       setResponse(`Exported ${countExportedSettings(exported)} setting values`);
     } catch (error) {
-      console.error("Export failed:", error);
+      console.error("Export failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -463,7 +437,7 @@ export function RPCTestSection() {
 
       setResponse(`Imported ${settings.length} setting values`);
     } catch (error) {
-      console.error("Import failed:", error);
+      console.error("Import failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -499,7 +473,7 @@ export function RPCTestSection() {
       // device-private or secure while locked.
       setResponse(formatSetting(fetched));
     } catch (error) {
-      console.error("Get setting failed:", error);
+      console.error("Get setting failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -527,7 +501,7 @@ export function RPCTestSection() {
       setListedSettings(settings);
       setResponse(`Listed ${settings.length} settings`);
     } catch (error) {
-      console.error("List failed:", error);
+      console.error("List failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -561,7 +535,7 @@ export function RPCTestSection() {
           );
           setResponse(`Wrote ${bytes.length} bytes via chunked transfer`);
         } catch (error) {
-          console.error("Chunked write failed:", error);
+          console.error("Chunked write failed:", errorKind(error));
           setResponse(
             `Failed: ${
               error instanceof Error ? error.message : "Unknown error"
@@ -641,7 +615,7 @@ export function RPCTestSection() {
         `${resp.status?.message || "Created"} (${resp.status?.affectedCount ?? 1})`
       );
     } catch (error) {
-      console.error("Create setting failed:", error);
+      console.error("Create setting failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
@@ -764,7 +738,7 @@ export function RPCTestSection() {
         setResponse(`Listed ${settings.length} settings`);
       } catch (error) {
         if (!cancelled) {
-          console.error("Initial list failed:", error);
+          console.error("Initial list failed:", errorKind(error));
           setResponse(
             `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
           );
@@ -1703,166 +1677,6 @@ function optionalString(value: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function requestSummary(request: Request): Record<string, unknown> {
-  if (request.listSettings) {
-    return {
-      kind: "listSettings",
-      scope: scopeSummary(request.listSettings.scope),
-      requireMeta: request.listSettings.requireMeta,
-      requireDefault: request.listSettings.requireDefault,
-    };
-  }
-  if (request.getSetting) {
-    return {
-      kind: "getSetting",
-      setting: refSummary(request.getSetting.setting),
-      requireMeta: request.getSetting.requireMeta,
-      requireDefault: request.getSetting.requireDefault,
-    };
-  }
-  if (request.writeSetting) {
-    return {
-      kind: "writeSetting",
-      setting: refSummary(request.writeSetting.setting),
-      valueKind: valueKind(request.writeSetting.value),
-      mode: request.writeSetting.mode,
-    };
-  }
-  if (request.saveSettings) {
-    return {
-      kind: "saveSettings",
-      scope: scopeSummary(request.saveSettings.scope),
-    };
-  }
-  if (request.discardSettings) {
-    return {
-      kind: "discardSettings",
-      scope: scopeSummary(request.discardSettings.scope),
-    };
-  }
-  if (request.resetSettings) {
-    return {
-      kind: "resetSettings",
-      scope: scopeSummary(request.resetSettings.scope),
-    };
-  }
-  if (request.pushBackArray) {
-    return {
-      kind: "pushBackArray",
-      setting: refSummary(request.pushBackArray.setting),
-      valueKind: scalarValueKind(request.pushBackArray.value),
-      mode: request.pushBackArray.mode,
-    };
-  }
-  if (request.popBackArray) {
-    return {
-      kind: "popBackArray",
-      setting: refSummary(request.popBackArray.setting),
-      mode: request.popBackArray.mode,
-    };
-  }
-  if (request.createSetting) {
-    return {
-      kind: "createSetting",
-      setting: refSummary(request.createSetting.setting),
-      valueKind: valueKind(request.createSetting.value),
-      mode: request.createSetting.mode,
-    };
-  }
-  if (request.deleteSetting) {
-    return {
-      kind: "deleteSetting",
-      setting: refSummary(request.deleteSetting.setting),
-    };
-  }
-
-  return { kind: "unknown" };
-}
-
-function responseSummary(response: Response): Record<string, unknown> {
-  if (response.error) {
-    return { kind: "error", message: response.error.message };
-  }
-  if (response.status) {
-    return {
-      kind: "status",
-      affectedCount: response.status.affectedCount,
-      message: response.status.message,
-    };
-  }
-  if (response.getSetting) {
-    return {
-      kind: "getSetting",
-      setting: settingSummary(response.getSetting.setting),
-    };
-  }
-
-  return { kind: "unknown" };
-}
-
-function notificationSummary(
-  notification: SettingsNotification
-): Record<string, unknown> {
-  if (notification.setting) {
-    return {
-      kind: "setting",
-      notificationKind: notification.setting.kind,
-      setting: settingSummary(notification.setting.setting),
-    };
-  }
-
-  return { kind: "unknown" };
-}
-
-function settingSummary(setting: Setting | undefined): Record<string, unknown> {
-  if (!setting) {
-    return { present: false };
-  }
-
-  return {
-    present: true,
-    customSubsystemIndex: setting.customSubsystemIndex,
-    key: setting.key,
-    source: setting.source,
-    hasUnsavedValue: setting.hasUnsavedValue,
-    hasMeta: setting.meta !== undefined,
-    hasValue: setting.value !== undefined,
-    valueKind: valueKind(setting.value),
-    hasDefaultValue: setting.defaultValue !== undefined,
-    defaultValueKind: valueKind(setting.defaultValue),
-  };
-}
-
-function refSummary(ref: SettingRef | undefined): Record<string, unknown> {
-  if (!ref) {
-    return { present: false };
-  }
-
-  return {
-    present: true,
-    customSubsystemIndex: ref.customSubsystemIndex,
-    key: ref.key,
-    source: ref.source,
-    arrayIndex: ref.arrayIndex,
-  };
-}
-
-function scopeSummary(
-  scope: SettingScope | undefined
-): Record<string, unknown> {
-  if (!scope) {
-    return { present: false };
-  }
-
-  return {
-    present: true,
-    customSubsystemIndex: scope.customSubsystemIndex,
-    key: scope.key,
-    keyPrefix: scope.keyPrefix,
-    source: scope.source,
-  };
-}
-
 function scopeTargetsAll(scope: SettingScope | undefined): boolean {
   return scope?.source === SOURCE_ALL;
 }
@@ -1885,40 +1699,6 @@ async function withTimeout<T>(
       clearTimeout(timeout);
     }
   }
-}
-
-function valueKind(value: SettingValue | undefined): string {
-  if (!value) {
-    return "none";
-  }
-  if (value.arrayValue) {
-    return `array:${scalarValueKind(value.arrayValue.value)}`;
-  }
-
-  return scalarValueKind(value);
-}
-
-function scalarValueKind(value: SettingScalarValue | undefined): string {
-  if (!value) {
-    return "none";
-  }
-  if (value.bytesValue !== undefined) {
-    return "bytes";
-  }
-  if (value.int32Value !== undefined) {
-    return "int32";
-  }
-  if (value.boolValue !== undefined) {
-    return "bool";
-  }
-  if (value.stringValue !== undefined) {
-    return "string";
-  }
-  if (value.behaviorValue !== undefined) {
-    return "behavior";
-  }
-
-  return "empty";
 }
 
 export default App;

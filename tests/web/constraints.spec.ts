@@ -6,11 +6,11 @@ import {
   scalarValueToEditorString,
   scalarValueToNumber,
   validateConstraintValue,
-} from "../src/constraints";
+} from "../../web/src/constraints";
 import type {
   SettingConstraint,
   SettingMeta,
-} from "../src/proto/cormoran/zmk/custom_settings/custom_settings";
+} from "../../web/src/proto/cormoran/zmk/custom_settings/custom_settings";
 
 function meta(constraints: SettingConstraint[]): SettingMeta {
   return {
@@ -37,13 +37,13 @@ describe("getActiveConstraint", () => {
 describe("constraintKind", () => {
   it("maps each constraint oneof to its kind", () => {
     expect(constraintKind({ options: { values: [], labels: [] } })).toBe(
-      "options"
+      "options",
     );
     expect(constraintKind({ range: { min: undefined, max: undefined } })).toBe(
-      "range"
+      "range",
     );
     expect(
-      constraintKind({ hidUsage: { usagePage: 7, usageMin: 0, usageMax: 5 } })
+      constraintKind({ hidUsage: { usagePage: 7, usageMin: 0, usageMax: 5 } }),
     ).toBe("hidUsage");
     expect(constraintKind({ layerId: {} })).toBe("layerId");
     expect(constraintKind({ behaviorId: {} })).toBe("behaviorId");
@@ -57,7 +57,7 @@ describe("optionEntries", () => {
       optionEntries({
         values: [{ int32Value: 1 }, { int32Value: 2 }],
         labels: ["Low", ""],
-      })
+      }),
     ).toEqual([
       { value: "1", label: "Low" },
       { value: "2", label: "2" },
@@ -71,13 +71,13 @@ describe("isOptionsPossiblyTruncated", () => {
       isOptionsPossiblyTruncated({
         values: Array.from({ length: 8 }, (_, i) => ({ int32Value: i })),
         labels: [],
-      })
+      }),
     ).toBe(true);
     expect(
       isOptionsPossiblyTruncated({
         values: [{ int32Value: 0 }],
         labels: [],
-      })
+      }),
     ).toBe(false);
   });
 });
