@@ -33,7 +33,12 @@
 #endif
 
 #include <zephyr/logging/log.h>
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+/* Test fixtures may build these sources without this module's Kconfig. */
+#ifndef CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL
+#define CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_custom_settings_fork_custom_settings_handler,
+                    CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL);
 
 #define SUBSYSTEM_IDENTIFIER_STRING "cormoran_custom_settings"
 #define LIST_SETTINGS_NOTIFICATION_DELAY                                                           \

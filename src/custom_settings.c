@@ -24,7 +24,12 @@
 
 #include "custom_settings_internal.h"
 
-LOG_MODULE_DECLARE(zmk, CONFIG_ZMK_LOG_LEVEL);
+/* tests/settings-boundary builds these sources without this module's Kconfig. */
+#ifndef CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL
+#define CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL 3
+#endif
+LOG_MODULE_REGISTER(zmk_custom_settings_fork_custom_settings,
+                    CONFIG_ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL);
 
 ZMK_EVENT_IMPL(zmk_custom_setting_changed);
 ZMK_EVENT_IMPL(zmk_custom_settings_initialized);

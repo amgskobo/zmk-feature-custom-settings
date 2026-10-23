@@ -248,3 +248,11 @@ config ZMK_CUSTOM_SETTINGS_ZMK_CONFIG_SAMPLES
     bool "Enable custom settings samples for tests/zmk-config"
 
 endif
+
+config ZMK_CUSTOM_SETTINGS_FORK_LOG_LEVEL
+    int "zmk-custom-settings-fork log level (0 off, 1 error, 2 warning, 3 info, 4 debug)"
+    range 0 4
+    default 3
+    help
+      Logs contain operational state and numeric diagnostics, never input
+      contents, user labels, peer addresses or authentication material.
