@@ -563,7 +563,7 @@ Follow the repo rule: proto → firmware handler → web, tests at each mileston
    fixed-buffer core path; convert the pool to own its members via an intrusive
    list (§3.4) so it no longer depends on `ZMK_CUSTOM_SETTING_FOREACH` (this
    also unblocks §5). Update tests (`custom_settings_test.c`, snapshots) and
-   `test.py` build coverage.
+   `tests/test_owner.py` build coverage.
 2. **Change 2 (read chunk).** Proto: drop `ReadValueChunkRequest`. Firmware:
    value-encode callback on `Setting.value`; delete read handler + staging;
    confirm large `GetSetting` streams on hardware (reuse #24's `large_bytes`

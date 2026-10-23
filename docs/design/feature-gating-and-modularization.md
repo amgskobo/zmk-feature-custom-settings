@@ -113,7 +113,7 @@ at the definition site instead of a bare undefined-reference at link.
 
 Ordering respects KEYSPACE→POOL and avoids any broken intermediate build by
 keeping every new gate **`default y` until the final flip**. Each phase leaves
-the whole tree green (`pre-commit run --all-files`, `python3 -m unittest`,
+the whole tree green (`pre-commit run --all-files`, `python3 -m unittest discover -v -s tests -p test_owner.py`,
 `west zmk-test tests -m .`, `west zmk-build tests/zmk-config`, web tests) and
 opens a PR; the orchestrator reviews + hardware-validates between phases.
 
@@ -209,7 +209,7 @@ CONFIG_..." message instead of an undefined-reference at link time:
   prerequisite in the README instead.
 
 **Self-tests** (`tests/{test,studio,split_peripheral}/native_sim.conf`) now
-explicitly set all five gates to `y` - `src/test/custom_settings_test.c`
+explicitly set all five gates to `y` - `tests/ztest/custom_settings_test.c`
 exercises every feature unconditionally and was left untouched, so the three
 snapshot files stay byte-identical (confirmed: empty `git diff` on all three
 `keycode_events.snapshot` files).

@@ -82,8 +82,8 @@ see [Large Values](#large-values-per-setting-max_size).
 Beyond the always-available core (scalar/BYTES/STRING/BEHAVIOR settings,
 memory/persist/temporary writes, save/discard/reset, Studio RPC list/get/write),
 five optional features are gated behind their own Kconfig option. Each is
-**enabled by default (`default y`)** so existing configurations keep working
-unchanged; disable the ones your firmware doesn't use to shrink flash/RAM:
+**enabled by default (`default y`)**; disable the features your firmware does
+not use to shrink flash/RAM:
 
 | Kconfig                                  | Enables                                                                          |
 | ----------------------------------------- | --------------------------------------------------------------------------------- |
@@ -109,13 +109,9 @@ Studio RPC on, all five features off) vs `custom_settings_board_with_rpc`
 delta depends on which settings you register and their sizing knobs (see
 [Memory Notes](#memory-notes)).
 
-> **Upgrading from an earlier version:** these five gates previously defaulted
-> to `y`. If your `.conf` does not already set them explicitly, a firmware
-> update to this version will silently compile out any array/keyspace/large-
-> value/converter/record setting you use — re-enable the gates your config
-> needs (e.g. a module that registers a keyspace needs
-> `CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE=y`, which pulls in `LARGE_VALUES` via
-> `select`) before upgrading.
+The minimal build fixture explicitly disables all five features. Its configuration
+does not change the production defaults. Keyspaces require `LARGE_VALUES` and
+select it automatically.
 
 ### Split Keyboards
 
@@ -311,6 +307,9 @@ int ret = zmk_custom_setting_record_set(my_profile_setting, &my_profile_schema, 
 Field ids are the stable identifiers for schema evolution, so keep them
 fixed once a field ships (like setting keys). `_id` values are single bytes
 (0-255) and only need to be unique within one schema.
+
+Decoding skips complete unknown fields for schema evolution. An incomplete
+field header or payload returns `-EINVAL`; a dangling tag is not an empty field.
 
 Field constraints are limited to none and a range on `INT32` fields
 (`zmk_custom_setting_record_set` returns `-ENOTSUP` for other constraint
@@ -900,11 +899,21 @@ without a known persisted value still use the default. These rules also apply
 to arrays, pooled large values and keyspace payloads. Scoped operations and
 array reloads can retain successful partial work; they are not transactions.
 
-Module state access acquires Zephyr's settings mutex before its own mutex to
-avoid a load/write lock inversion. This uses the internal `settings_lock`
-symbol, verified for the selected Zephyr revision by the owner native tests and
-board builds. Recheck that dependency on Zephyr upgrades. Reads serialize with
-settings I/O, so this is not a nonblocking or latency guarantee. Discard uses a
+Storage/mutation operations and borrowed-value callbacks acquire Zephyr's
+settings mutex before the module state mutex to avoid a load/write lock
+inversion. This uses the internal `settings_lock` symbol, verified for the
+selected Zephyr revision by owner native tests and board builds. Recheck that
+dependency on Zephyr upgrades.
+
+Pure RAM lookups, fixed-carrier reads, buffer copies and value metadata use
+only the module state mutex. They can complete when a settings loader holds
+the storage mutex and waits for a consumer's work queue. They still serialize
+with state mutation; this is not a nonblocking or latency guarantee. A read
+may observe an already-applied record during a load. Consumers requiring all
+boot settings must wait for initialization explicitly; a read is not a
+load-completion barrier or a subtree transaction. `with_value` on ordinary
+settings retains the paired guard because its caller callback may use storage;
+use the copy/read APIs for work-queue consumers. Discard uses a
 direct load callback to preserve record read/parse errors; a backend-wide load
 failure without a record callback may appear as `-ENOENT`, because Zephyr's
 load API does not expose every backend error.
@@ -1025,3 +1034,22 @@ CI runs this automatically in the `Renode custom-settings wired-split relay test
 job, via `zmk-west-commands`' [`zmk-renode-test` composite
 action](https://github.com/cormoran/zmk-west-commands/tree/main/.github/actions/zmk-renode-test)
 (which installs Renode + the protobuf/protoc deps for you).
+
+## Coalescing firmware notifications
+
+`ZMK_CUSTOM_SETTINGS_HAS_QUIET_WRITES` identifies the call-scoped quiet API.
+`zmk_custom_setting_write_quiet`, `zmk_custom_setting_write_bytes_quiet` and
+`zmk_custom_setting_save_quiet` perform the same mutation and synchronous core
+change event as their ordinary counterparts. Only that event's Studio
+notification is omitted; independent writers retain their normal notifications.
+A caller coalescing notifications must later raise an ordinary public
+`zmk_custom_setting_changed` event for the setting. That event reads the current
+registry value; never replay a previously captured value through a write.
+Use `zmk_custom_setting_save` to atomically persist the current memory value,
+rather than composing a read with a later PERSIST write. A temporary override
+is cleared by save and is not promoted into persistent memory.
+
+Quiet operations do not change the legacy `notify_suppress_begin/end` bracket.
+That older bracket uses shared state and does not isolate concurrent writers.
+Queue submission and transport delivery failures remain separate from a
+successful registry mutation or event dispatch.
