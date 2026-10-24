@@ -55,3 +55,4 @@ PASS: custom_settings_initialized_event count=1
 PASS: split_peripheral_relay
 PASS: split_peripheral_relay_pop_back size=2
 PASS: split_peripheral_relay_push_back array[2]=44 size=3
+PASS: split_peripheral_relay_oversized_request

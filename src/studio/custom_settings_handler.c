@@ -1046,6 +1046,13 @@ static struct bounded_decode_scratch relay_notification_value_decode_scratch = {
 
 static int relayed_notification_to_public(const struct zmk_custom_settings_relay_notification *ev,
                                           cormoran_zmk_custom_settings_Notification *notification) {
+    /* The size comes from the other half: never decode past the payload. */
+    if (ev->payload_size > sizeof(ev->payload)) {
+        LOG_WRN("Relayed custom settings notification size %u exceeds its payload",
+                ev->payload_size);
+        return -EINVAL;
+    }
+
     k_mutex_lock(&relay_notification_decode_lock, K_FOREVER);
 
     cormoran_zmk_custom_settings_RelayNotification *relay = &relay_notification_decode_buffer;
@@ -2762,6 +2769,12 @@ static bool relay_request_arm_wire_precallback(pb_istream_t *stream, const pb_fi
 
 static int process_relay_request(const struct zmk_custom_settings_relay_request *req,
                                  cormoran_zmk_custom_settings_Response *resp) {
+    /* The size comes from the other half: never decode past the payload. */
+    if (req->payload_size > sizeof(req->payload)) {
+        LOG_WRN("Relayed custom settings request size %u exceeds its payload", req->payload_size);
+        return -EINVAL;
+    }
+
     k_mutex_lock(&relay_request_decode_lock, K_FOREVER);
 
     cormoran_zmk_custom_settings_RelayRequest *decoded_req = &relay_request_decode_buffer;

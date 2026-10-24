@@ -139,6 +139,56 @@ static int custom_settings_split_peripheral_relay_test_init(void) {
         return -EINVAL;
     }
     printk("PASS: split_peripheral_relay_push_back array[2]=44 size=3\n");
+
+    /* A size larger than the payload it travels in is refused before
+     * decoding. The bytes are a valid write followed by unknown
+     * length-delimited fields, so they would decode, and write 67, if the size
+     * were trusted; the last byte sits just past the payload. */
+    static struct {
+        struct zmk_custom_settings_relay_request request;
+        uint8_t tail;
+    } __packed oversized;
+    static uint8_t oversized_bytes[sizeof(oversized.request.payload) + 1];
+    BUILD_ASSERT(sizeof(oversized_bytes) <= UINT8_MAX, "payload_size must hold the test size");
+    request.request_type.write_setting.value.value_type.int32_value = 67;
+    pb_ostream_t stream = pb_ostream_from_buffer(oversized_bytes, sizeof(oversized_bytes));
+    if (!pb_encode(&stream, cormoran_zmk_custom_settings_RelayRequest_fields, &request)) {
+        LOG_ERR("Split peripheral relay oversized encode failed: %s", PB_GET_ERROR(&stream));
+        return -EIO;
+    }
+    size_t used = stream.bytes_written;
+    while (sizeof(oversized_bytes) - used >= 2) {
+        size_t len = MIN(sizeof(oversized_bytes) - used - 2, 127);
+        if (sizeof(oversized_bytes) - used - 2 - len == 1) {
+            len--; /* never leave a one-byte tail */
+        }
+        oversized_bytes[used++] = (15 << 3) | 2; /* unknown field 15, length-delimited */
+        oversized_bytes[used++] = (uint8_t)len;
+        memset(&oversized_bytes[used], 0, len);
+        used += len;
+    }
+    if (used != sizeof(oversized_bytes)) {
+        LOG_ERR("Split peripheral relay oversized padding left %u bytes",
+                (unsigned int)(sizeof(oversized_bytes) - used));
+        return -EINVAL;
+    }
+    oversized.request.source = 1;
+    oversized.request.payload_size = sizeof(oversized_bytes);
+    memcpy(oversized.request.payload, oversized_bytes, sizeof(oversized.request.payload));
+    oversized.tail = oversized_bytes[sizeof(oversized.request.payload)];
+
+    resp = (cormoran_zmk_custom_settings_Response)cormoran_zmk_custom_settings_Response_init_zero;
+    ret = process_relay_request(&oversized.request, &resp);
+    if (ret != -EINVAL) {
+        LOG_ERR("Split peripheral relay oversized request was not refused: %d", ret);
+        return -EINVAL;
+    }
+    ret = zmk_custom_setting_read(setting, &value);
+    if (ret < 0 || value.int32_value != 66) {
+        LOG_ERR("Split peripheral relay oversized request changed the setting");
+        return -EINVAL;
+    }
+    printk("PASS: split_peripheral_relay_oversized_request\n");
     return 0;
 }
 
