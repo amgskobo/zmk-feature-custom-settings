@@ -81,3 +81,54 @@ focused native owner command from that isolated copy, in a fresh output path;
 it must fail the checked public-suppression fixture. No dependency is patched,
 no assertion is removed and no snapshot is accepted. Exact quiet scalar and
 small/large/keyspace payload reads are asserted as well as events and counts.
+
+The real-kernel [settings boundary fixture](settings-boundary/README.md) also
+checks stored keyspace ordinal parsing through the production settings load
+handler. Decimal names must fit uint32 and the keyspace capacity before their
+payload is read. Invalid initial and later records cannot create a wrapped
+slot or alter valid entries and independent scalar settings; leading zeros
+remain accepted for valid slot numbers. The features binary runs twenty
+scenarios, with the same binary repeated three times in fresh processes.
+`ordinal_overflow_negative_control.py` restores only unchecked accumulation
+in an isolated source copy; the unchanged real-loader assertion must fail.
+This controlled backend verifies parsing/state behavior, not physical NVS
+corruption, power loss or storage retention.
+
+The same fixture covers small/large keyspace rename failure stages. Validation
+and allocation refusal preserve RAM and durable entries; a backend PERSIST
+pre-write refusal retains the renamed RAM entry as dirty without a changed event. Save
+retry and discard/reload recover through the real settings APIs, preserving
+the same slot, exact payload and independent entries. This is the existing
+RAM-first persistence contract, not transactional rename or physical NVS
+failure acceptance. The old durable key is retained by the controlled pre-write
+refusal; arbitrary physical storage errors provide no atomic durability guarantee.
+
+The `array-ordinal` case separately checks the production array-name parser:
+overflowing numbers and overlong names with hidden non-decimal suffixes are
+refused before payload reads, preserving valid elements, dirty state, length
+and independent settings. `array_ordinal_negative_control.py` removes each
+guard separately in an isolated src copy; the unchanged real-loader checks
+must fail three times per fault. First/last valid indices and leading zeros
+remain supported.
+
+The owner command boundary limits `zmk-build` to one target at a time by
+default. `OWNER_TEST_BUILD_PARALLELISM` selects an explicit positive target
+count; account for compiler jobs and concurrent owners in the global budget.
+`tests/test_build_budget.py` checks default/explicit forwarding and rejects
+invalid budgets before launching west. The canonical owner entry includes
+these controls without dropping any native or board scenario.
+
+Native result admission requires every `native_sim.keymap` fixture to have a
+matching binary. `required_hooks.json` names the expected checked initialization
+hooks and required feature/role configuration. Fixture-bound declarations also
+reject missing configuration when both the request and build omit it; excluded
+roles cannot replace the requested role. The verifier retains all three raw
+runs before comparing unchanged ordered snapshots and rejects logged failures,
+fatal output and missing/nonzero completions. `tests/test_native_verifier.py`
+owns eleven real-ELF admission controls, including a deliberately missing
+native scenario, wrong-role and unrelated-fixture controls.
+
+`bash tests/run-web.sh` is the canonical schema-generation/Web test entry.
+It runs all configured Jest scenarios in one worker process. The pre-commit
+Jest hook dispatches this same owner entry so nested workers do not multiply
+the global container budget. Build and lint retain their separate package entries.

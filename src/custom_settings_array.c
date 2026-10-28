@@ -713,6 +713,9 @@ bool split_array_size_key(const char *name, char *array_key, size_t array_key_si
 bool split_array_element_key(const char *name, char *array_key, size_t array_key_size,
                              uint32_t *index) {
     size_t name_len = bounded_strlen(name, CONFIG_ZMK_CUSTOM_SETTINGS_KEY_MAX_LEN);
+    if (name[name_len] != '\0') {
+        return false;
+    }
 
     const char *slash = NULL;
     for (size_t i = name_len; i > 0; i--) {
@@ -736,7 +739,11 @@ bool split_array_element_key(const char *name, char *array_key, size_t array_key
         if (index_str[i] < '0' || index_str[i] > '9') {
             return false;
         }
-        value = value * 10 + (uint32_t)(index_str[i] - '0');
+        uint32_t digit = (uint32_t)(index_str[i] - '0');
+        if (value > (UINT32_MAX - digit) / 10U) {
+            return false;
+        }
+        value = value * 10U + digit;
     }
 
     size_t key_len = (size_t)(slash - name);

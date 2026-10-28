@@ -36,7 +36,7 @@ src/
     ├── cormoran/zmk/custom_settings/custom_settings.ts
     └── cormoran/zmk/custom_settings/custom_settings_relay.ts
 
-test/
+../tests/web/
 ├── App.spec.tsx
 └── RPCTestSection.spec.tsx
 ```
@@ -52,3 +52,10 @@ intentional setting/profile displays retain their existing behavior. Custom
 Settings list diagnostics summarize counts, elapsed milliseconds, and a fixed
 completion reason; individual RPC payloads and notifications are not logged.
 The Vite plugin also sanitizes executable console output in the two locked Studio SDKs. New SDK log sites stop the build for review; both SDKs are excluded from development prebundling so the same transform applies in development and production. Browser-generated diagnostics and unrelated browser extensions are outside this application's control.
+
+## Dependency security
+
+`package.json` overrides the Studio client's transitive `protobufjs` dependency
+to `7.6.5`, including the patched UTF-8 helper. Use `npm ci` with this lockfile.
+After changing dependencies, run `npm audit --omit=dev`, the Web tests and the
+production build.

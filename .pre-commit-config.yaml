@@ -38,7 +38,7 @@ repos:
     hooks:
       - id: jest
         name: jest tests
-        entry: bash -c 'cd web && npm test'
+        entry: bash tests/run-web.sh
         language: system
         files: ^(web/|tests/web/)
         pass_filenames: false

@@ -57,17 +57,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 try:
     import renode_harness as rh
 except ImportError:  # pragma: no cover - local-dev fallback
-    for cand in (
-        REPO_ROOT / "dependencies" / "zmk-west-commands" / "scripts" / "lib" / "renode",
-        REPO_ROOT.parent / "zmk-west-commands" / "scripts" / "lib" / "renode",
-    ):
-        if cand.is_dir():
-            sys.path.insert(0, str(cand))
-            import renode_harness as rh  # noqa: F401
-
-            break
-    else:
+    commands_lib = (
+        REPO_ROOT / "dependencies" / "zmk-west-commands" / "scripts" / "lib" / "renode"
+    )
+    if not commands_lib.is_dir():
         raise
+    sys.path.insert(0, str(commands_lib))
+    import renode_harness as rh  # noqa: F401
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import custom_settings_usb_wired_split_lib as splitlib  # noqa: E402

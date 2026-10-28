@@ -21,7 +21,7 @@ does not prevent Zephyr from loading unrelated workspace modules and their
 application Kconfig files into this standalone kernel fixture.
 
 Each scenario runs in a fresh process three times. The core variant has ten
-scenarios; the features variant has those ten plus six data-feature cases:
+scenarios; the features variant has those ten plus ten data-feature cases:
 
 - `control`: serialized save/discard/reset, same-thread recursive reload and
   independent state.
@@ -34,6 +34,29 @@ scenarios; the features variant has those ten plus six data-feature cases:
   preserve visible value, dirty state and notification behavior, followed by retry.
 - `array-error`, `blob-error`, `keyspace-error`: failed persistence and reload
   retain recoverable state; successful retry restores exact values/array length.
+- `keyspace-ordinal`: the real settings loader rejects empty, non-decimal,
+  out-of-capacity, uint32-overflow and very long stored ordinal names before
+  reading their payload. An invalid first record cannot claim slot zero;
+  subsequent invalid records cannot change valid slots zero/one, their keys,
+  payloads, dirty state or independent scalar settings. UINT32_MAX and the
+  first overflowing number remain distinct boundaries. Leading-zero decimal
+  names still select the exact valid slot. Zephyr intentionally ignores a
+  handler error during load, so refusal is checked through payload-read counts
+  and the real public setting state, rather than the overall load return code.
+- `array-ordinal`: the same real load boundary refuses overflowing decimal
+  array indices and overlong names before reading payloads. A non-decimal
+  suffix beyond the parser's scan bound cannot be ignored. Invalid first and
+  later records preserve both valid elements, length, dirty flags and
+  independent scalar settings. Valid first/last indices and leading zeros
+  still load their exact values.
+- `rename-error`, `rename-large-error`: the real small/large write paths keep
+  payload and slot identity. Validation and exhausted shared-pool allocation
+  refuse without RAM/durable changes or changed events. A backend PERSIST
+  refusal before writing instead leaves the new RAM key dirty, with the old durable key and
+  no changed event; successful save retry and discard/reload recovery retain
+  exact payloads and independent entries/scalars. These assertions describe
+  existing RAM-first writes; rename is not a separate transaction. Arbitrary
+  physical storage errors provide no atomic durability guarantee.
 - `queue-scalar`, `queue-array`, `queue-blob`, `queue-keyspace`: a real settings
   loader holds the storage mutex after applying records, queues a RAM consumer
   before a synchronous work handoff, then waits for the latter. The loader and
@@ -50,6 +73,25 @@ overwritten. The command returns nonzero if any contract fails. Do not change
 assertions merely to make it green. `CUSTOM_SETTINGS_SOURCE_DIR` can select an
 isolated production-source copy for a negative control without modifying the
 active checkout.
+
+For the identified ordinal-overflow negative control, copy the owner source
+to an isolated directory and run
+`python3 tests/ordinal_overflow_negative_control.py /absolute/isolated-owner/src/custom_settings_keyspace.c`
+from the original checkout. Select the isolated source with
+`CUSTOM_SETTINGS_SOURCE_DIR=/absolute/isolated-owner/src` and rerun this same
+fixture in fresh artifacts.
+The unchanged `keyspace-ordinal` assertion must fail: `#4294967296` is read
+and aliases slot zero without the checked multiply/add. The operator refuses
+the active checkout and changes neither assertions nor dependencies.
+
+The array controls use the same fixture and a separate isolated source copy
+per fault:
+`python3 tests/array_ordinal_negative_control.py /absolute/isolated-owner/src/custom_settings_array.c overflow`
+or `truncation`. Select that copy's **src directory** with
+`CUSTOM_SETTINGS_SOURCE_DIR`; both controls must produce three failures.
+The overflow control aliases `4294967296` to element zero; the truncation
+control ignores a non-decimal suffix beyond the scan bound. No assertion or
+dependency is changed.
 
 The storage/mutation and borrowed-callback guard acquires Zephyr's internal
 `settings_lock` before the module state lock, including recursive reloads.

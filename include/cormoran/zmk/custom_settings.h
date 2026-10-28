@@ -1284,8 +1284,13 @@ int zmk_custom_setting_keyspace_delete(struct zmk_custom_setting_keyspace *keysp
  * rename is discarded back to the persisted key). Returns -ENOENT if
  * `old_key` has no live slot, -EEXIST if `new_key` already has one
  * (including `new_key` == `old_key`), -EINVAL / -ENAMETOOLONG for `new_key`
- * as create() does, and -ENOSPC if the pool cannot hold a longer key; on
- * failure the entry is unchanged. */
+ * as create() does, and -ENOSPC if the pool cannot hold a longer key.
+ * Validation/allocation refusal leaves the entry unchanged. Like other
+ * PERSIST writes, a backend save failure retains the renamed RAM entry as
+ * dirty, with its payload and slot unchanged. A backend refusal before writing
+ * keeps the previous durable key; arbitrary physical storage errors provide no
+ * atomic durability guarantee. Save retries the renamed entry and discard
+ * reloads the persisted key. A failed write raises no changed event. */
 int zmk_custom_setting_keyspace_rename(struct zmk_custom_setting_keyspace *keyspace,
                                        const char *old_key, const char *new_key,
                                        enum zmk_custom_setting_write_mode mode);

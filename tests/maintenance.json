@@ -26,6 +26,24 @@
       "contract": "Quiet scalar, small/large raw, typed/raw keyspace and save retain exact registry values and synchronous core events; real Studio queue submissions are zero for quiet and exactly one for ordinary; independent nested writer still notifies; existing observed suppression snapshot count preserved.",
       "negative_control": "tests/quiet_notify_negative_control.py removes only the Studio quiet-event guard in a separate owner copy; unchanged owner native fixture must fail.",
       "limits": "Queue submission selection only; legacy global suppression and physical transport congestion/delivery remain separate gaps."
+    },
+    {
+      "fixture": "tests/settings-boundary/main.c: keyspace_ordinals (features keyspace-ordinal scenario)",
+      "contract": "The real settings load path refuses empty/non-decimal, out-of-capacity and overflowing stored decimal ordinals before reading payloads; invalid first/later records preserve independent settings and valid slot identities/keys/payloads/dirty state, while valid leading-zero ordinals still load.",
+      "negative_control": "tests/ordinal_overflow_negative_control.py restores only unchecked multiply/add in an isolated source copy; unchanged real-loader assertions must fail on #4294967296 aliasing slot zero.",
+      "limits": "Controlled Zephyr settings backend and uint32/capacity boundaries; physical NVS corruption, power loss and retention are not established."
+    },
+    {
+      "fixture": "tests/settings-boundary/main.c: keyspace_rename_failure and rename_allocation (rename-error/rename-large-error)",
+      "contract": "Small/large rename validation and allocation refusals preserve the entry; PERSIST backend pre-write refusal retains the new RAM key as dirty and previous durable key without a changed event. Same-slot payloads, independent entries/scalars, save retry and discard/reload recovery are exact.",
+      "negative_control": "Before contract correction the same real-loader/backend fixture records -EIO with RAM=item/new, dirty=1, durable=item/old and events=0, disproving the previous unconditional unchanged-on-failure promise. No production rename behavior changed.",
+      "limits": "Existing RAM-first semantics under a controlled backend; no transaction/rollback guarantee, concurrent keyspace lifecycle or physical NVS/power-loss claim. Old durable key retention is proven only for the controlled pre-write refusal; arbitrary physical errors have no atomic durability guarantee."
+    },
+    {
+      "fixture": "tests/settings-boundary/main.c: array_ordinals (features array-ordinal)",
+      "contract": "The real settings load path refuses uint32 decimal overflow and incomplete bounded names before payload reads; valid element values/length/dirty state and independent settings stay exact, including first/last indices and leading zeros.",
+      "negative_control": "tests/array_ordinal_negative_control.py removes checked accumulation or full termination separately in isolated src copies; unchanged owner loader assertions must fail three times per fault.",
+      "limits": "Controlled Zephyr settings backend and configured name/uint32/capacity bounds, not physical NVS corruption or retention."
     }
   ]
 }

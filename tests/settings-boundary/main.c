@@ -55,6 +55,13 @@ ZMK_CUSTOM_SETTING_KEYSPACE_DEFINE(keys, "boundary", "item/", ZMK_CUSTOM_SETTING
                                    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
                                    ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
                                    ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
+/* Two short keys fit; growing one key exceeds this shared budget. */
+ZMK_CUSTOM_SETTING_KEYSPACE_DEFINE_WITH_POOL_SIZE(rename_keys, "boundary", "rename/",
+                                                  ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES, 4, 16, 2, 24,
+                                                  ZMK_CUSTOM_SETTING_CONFIDENTIALITY_RPC_PUBLIC,
+                                                  ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                                  ZMK_CUSTOM_SETTING_PERMISSION_UNSECURE,
+                                                  ZMK_CUSTOM_SETTING_NO_CONSTRAINT);
 #endif
 
 static struct extra_record {
@@ -62,6 +69,7 @@ static struct extra_record {
     uint8_t data[192];
     size_t size;
     bool present;
+    unsigned reads;
 } extra[8];
 static bool fail_extra;
 
@@ -76,7 +84,7 @@ static int32_t disk[2] = {20, 21};
 static int fail_save = -1, read_error, load_result = 99, writer_result = 99;
 /* Fails only the extra record with this storage name. */
 static const char *read_error_name;
-static unsigned saved[2], discarded, initialized;
+static unsigned saved[2], discarded, initialized, changes;
 static const char *operation;
 
 /* A settings loader may wait for a synchronous handoff to sysworkq while
@@ -163,6 +171,9 @@ K_WORK_DEFINE(handoff_work, handoff);
 
 static int observe(const zmk_event_t *event) {
     const struct zmk_custom_setting_changed *change = as_zmk_custom_setting_changed(event);
+    if (change) {
+        changes++;
+    }
     if (change && change->kind == ZMK_CUSTOM_SETTING_CHANGED_DISCARDED) {
         discarded++;
     }
@@ -207,6 +218,7 @@ static ssize_t read_value(void *context, void *data, size_t size) {
 }
 static ssize_t read_extra(void *context, void *data, size_t size) {
     struct extra_record *record = context;
+    record->reads++;
     if (read_error) {
         return read_error;
     }
@@ -543,6 +555,299 @@ static void blob_error(bool keyspace) {
     printk("PASS %s large write/read errors preserve payload/dirty and retry time=%lld\n",
            keyspace ? "keyspace" : "blob", k_uptime_get());
 }
+
+static void ordinal_record(unsigned record_index, const char *ordinal, const char *public_key,
+                           uint8_t payload) {
+    CHECK(record_index < ARRAY_SIZE(extra));
+    struct extra_record *record = &extra[record_index];
+    memset(record, 0, sizeof(*record));
+    int written =
+        snprintf(record->name, sizeof(record->name), "custom_settings/boundary/item/#%s", ordinal);
+    CHECK(written > 0 && (size_t)written < sizeof(record->name));
+    size_t key_size = strlen(public_key) + 1;
+    CHECK(key_size + 2 <= sizeof(record->data));
+    memcpy(record->data, public_key, key_size);
+    record->data[key_size] = payload;
+    record->data[key_size + 1] = payload + 1;
+    record->size = key_size + 2;
+    record->present = true;
+}
+
+static void ordinal_payload(const struct zmk_custom_setting *setting, const char *key,
+                            uint8_t expected) {
+    CHECK(setting != NULL && !strcmp(zmk_custom_setting_public_key(setting), key));
+    uint8_t payload[2];
+    size_t size = 0;
+    CHECK(zmk_custom_setting_read_into(setting, payload, sizeof(payload), &size, NULL) == 0);
+    CHECK(size == 2 && payload[0] == expected && payload[1] == expected + 1);
+    CHECK(!zmk_custom_setting_has_unsaved_value(setting));
+}
+
+static void array_record(unsigned record_index, const char *digits, int32_t payload) {
+    CHECK(record_index < ARRAY_SIZE(extra));
+    struct extra_record *record = &extra[record_index];
+    *record = (struct extra_record){.present = true};
+    int n =
+        snprintf(record->name, sizeof(record->name), "custom_settings/boundary/array/%s", digits);
+    CHECK(n > 0 && (size_t)n < sizeof(record->name));
+    memcpy(record->data, &payload, sizeof(payload));
+    record->size = sizeof(payload);
+}
+
+static void array_ordinal_values(int32_t zero, int32_t one) {
+    const struct zmk_custom_setting *a =
+        zmk_custom_setting_find_array_element("boundary", "array", 0);
+    const struct zmk_custom_setting *b =
+        zmk_custom_setting_find_array_element("boundary", "array", 1);
+    CHECK(a != NULL && b != NULL && a != b);
+    CHECK(value(a) == zero && value(b) == one);
+    CHECK(!zmk_custom_setting_has_unsaved_value(a) && !zmk_custom_setting_has_unsaved_value(b));
+    CHECK(zmk_custom_setting_array_size(&array_setting) == 2);
+    CHECK(value(first) == 20 && value(second) == 21 && initialized == 1);
+}
+
+static void array_ordinals(void) {
+    array_record(0, "4294967296", 90);
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    const struct zmk_custom_setting *zero =
+        zmk_custom_setting_find_array_element("boundary", "array", 0);
+    printk("array first-overflow reads=%u slot0=%d time=%lld\n", extra[0].reads, value(zero),
+           k_uptime_get());
+    CHECK(extra[0].reads == 0);
+    array_ordinal_values(1, 2);
+
+    array_record(0, "0", 4);
+    array_record(1, "1", 5);
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    array_ordinal_values(4, 5);
+    char hidden_nondigit[58];
+    memset(hidden_nondigit, '0', sizeof(hidden_nondigit) - 2);
+    hidden_nondigit[sizeof(hidden_nondigit) - 2] = 'x';
+    hidden_nondigit[sizeof(hidden_nondigit) - 1] = '\0';
+    const char *invalid[] = {
+        "",
+        "x",
+        "-1",
+        "0x0",
+        "1z",
+        "2",
+        "2147483648",
+        "4294967295",
+        "4294967296",
+        "4294967297",
+        "18446744073709551616",
+        "9999999999999999999999999999999999999999999999999999999999999999",
+        hidden_nondigit,
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); i++) {
+        array_record(2, invalid[i], 90);
+        CHECK(settings_load_subtree("custom_settings") == 0);
+        printk("array refusal case=%u payload_reads=%u time=%lld\n", (unsigned)i, extra[2].reads,
+               k_uptime_get());
+        CHECK(extra[2].reads == 0);
+        CHECK(zmk_custom_setting_find_array_element("boundary", "array", 0) == zero);
+        array_ordinal_values(4, 5);
+    }
+    array_record(2, "0001", 7);
+    CHECK(settings_load_subtree("custom_settings") == 0 && extra[2].reads == 1);
+    array_ordinal_values(4, 7);
+    array_record(2, "0000", 8);
+    CHECK(settings_load_subtree("custom_settings") == 0 && extra[2].reads == 1);
+    array_ordinal_values(8, 5);
+    printk("PASS array ordinal load rejects overflow/truncated/non-decimal/capacity "
+           "records; valid values and independent state preserved time=%lld\n",
+           k_uptime_get());
+}
+
+static void rename_payload(struct zmk_custom_setting_keyspace *keyspace,
+                           const struct zmk_custom_setting *setting, const char *key,
+                           const uint8_t *expected, size_t expected_size, bool dirty) {
+    uint8_t actual[96];
+    size_t size = 0;
+    CHECK(zmk_custom_setting_keyspace_find(keyspace, key) == setting);
+    CHECK(!strcmp(zmk_custom_setting_public_key(setting), key));
+    CHECK(zmk_custom_setting_read_into(setting, actual, sizeof(actual), &size, NULL) == 0);
+    CHECK(size == expected_size && !memcmp(actual, expected, size));
+    CHECK(zmk_custom_setting_has_unsaved_value(setting) == dirty);
+}
+
+static struct extra_record *rename_record(const char *name) {
+    for (size_t i = 0; i < ARRAY_SIZE(extra); i++) {
+        if (extra[i].present && !strcmp(extra[i].name, name)) {
+            return &extra[i];
+        }
+    }
+    CHECK(false);
+    return NULL;
+}
+
+static void rename_allocation(void) {
+    const struct zmk_custom_setting *a, *b;
+    uint8_t payload[] = {0x41, 0x42};
+    CHECK(zmk_custom_setting_keyspace_create(&rename_keys, "rename/a",
+                                             &ZMK_CUSTOM_SETTING_VALUE_BYTES(0x41, 0x42),
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &a) == 0);
+    CHECK(zmk_custom_setting_keyspace_create(&rename_keys, "rename/b",
+                                             &ZMK_CUSTOM_SETTING_VALUE_BYTES(0x41, 0x42),
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &b) == 0);
+    struct extra_record *record = rename_record("custom_settings/boundary/rename/#0");
+    struct extra_record durable = *record;
+    unsigned before = changes;
+    CHECK(zmk_custom_setting_keyspace_rename(&rename_keys, "rename/a", "rename/long",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -ENOSPC);
+    CHECK(changes == before && record->size == durable.size &&
+          !memcmp(record->data, durable.data, durable.size));
+    rename_payload(&rename_keys, a, "rename/a", payload, sizeof(payload), false);
+    rename_payload(&rename_keys, b, "rename/b", payload, sizeof(payload), false);
+    CHECK(zmk_custom_setting_keyspace_find(&rename_keys, "rename/long") == NULL);
+}
+
+static void keyspace_rename_failure(bool large) {
+    uint8_t payload[80], independent[] = {0x61, 0x62};
+    memset(payload, 0x51, sizeof(payload));
+    size_t size = large ? sizeof(payload) : 2;
+    const struct zmk_custom_setting *setting, *other;
+    CHECK(zmk_custom_setting_keyspace_create(&keys, "item/old",
+                                             &ZMK_CUSTOM_SETTING_VALUE_BYTES(0x51, 0x51),
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &setting) == 0);
+    if (large) {
+        CHECK(zmk_custom_setting_write_bytes(setting, payload, size,
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == 0);
+    }
+    CHECK(zmk_custom_setting_keyspace_create(&keys, "item/other",
+                                             &ZMK_CUSTOM_SETTING_VALUE_BYTES(0x61, 0x62),
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST, &other) == 0);
+    CHECK(setting == &keys.slots[0].setting && other == &keys.slots[1].setting);
+    struct extra_record *record = rename_record("custom_settings/boundary/item/#0");
+    struct extra_record durable = *record;
+    unsigned before = changes;
+    CHECK(zmk_custom_setting_keyspace_rename(NULL, "item/old", "item/new",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EINVAL);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "bad",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EINVAL);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/missing", "item/new",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -ENOENT);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "item/other",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EEXIST);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "item/old",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EEXIST);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "item/01234567890",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) ==
+          -ENAMETOOLONG);
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "item/new",
+                                             (enum zmk_custom_setting_write_mode) - 1) == -EINVAL);
+    CHECK(changes == before && record->size == durable.size &&
+          !memcmp(record->data, durable.data, durable.size));
+    rename_payload(&keys, setting, "item/old", payload, size, false);
+    rename_payload(&keys, other, "item/other", independent, sizeof(independent), false);
+
+    fail_extra = true;
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/old", "item/new",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EIO);
+    CHECK(changes == before && record->size == durable.size &&
+          !memcmp(record->data, durable.data, durable.size));
+    CHECK(zmk_custom_setting_keyspace_find(&keys, "item/old") == NULL);
+    rename_payload(&keys, setting, "item/new", payload, size, true);
+    rename_payload(&keys, other, "item/other", independent, sizeof(independent), false);
+    printk("rename persist failure large=%d returned=-EIO RAM=item/new dirty=1 "
+           "durable=item/old events=0 time=%lld\n",
+           large, k_uptime_get());
+
+    /* A successful retry saves the new RAM identity in the same ordinal. */
+    fail_extra = false;
+    CHECK(zmk_custom_setting_save(setting) == 0);
+    CHECK(!strcmp((const char *)record->data, "item/new"));
+    rename_payload(&keys, setting, "item/new", payload, size, false);
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    rename_payload(&keys, setting, "item/new", payload, size, false);
+
+    /* A second failed persist can instead be discarded back to the saved key. */
+    before = changes;
+    fail_extra = true;
+    CHECK(zmk_custom_setting_keyspace_rename(&keys, "item/new", "item/next",
+                                             ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST) == -EIO);
+    CHECK(changes == before && !strcmp((const char *)record->data, "item/new"));
+    rename_payload(&keys, setting, "item/next", payload, size, true);
+    CHECK(zmk_custom_setting_discard(setting) == 0);
+    CHECK(zmk_custom_setting_keyspace_find(&keys, "item/next") == NULL);
+    rename_payload(&keys, setting, "item/new", payload, size, false);
+    rename_payload(&keys, other, "item/other", independent, sizeof(independent), false);
+    fail_extra = false;
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    rename_payload(&keys, setting, "item/new", payload, size, false);
+    rename_payload(&keys, other, "item/other", independent, sizeof(independent), false);
+    CHECK(value(first) == 20 && value(second) == 21 && initialized == 1);
+    if (!large) {
+        rename_allocation();
+    }
+    printk("PASS rename validation/allocation refusal unchanged; persist failure "
+           "keeps dirty RAM and save/discard/reload recover large=%d time=%lld\n",
+           large, k_uptime_get());
+}
+
+static void keyspace_ordinals(void) {
+    /* Exercise the real Zephyr settings dispatch and production loader. The
+     * framework ignores unknown-record errors, so refusal means no payload
+     * callback and no slot/value mutation, not a nonzero settings_load result. */
+    ordinal_record(0, "4294967296", "item/poison", 0x90);
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    printk("ordinal first-overflow reads=%u slot0=%d slot1=%d time=%lld\n", extra[0].reads,
+           keys.slots[0].in_use, keys.slots[1].in_use, k_uptime_get());
+    CHECK(extra[0].reads == 0);
+    CHECK(!keys.slots[0].in_use && !keys.slots[1].in_use);
+    CHECK(zmk_custom_setting_keyspace_find(&keys, "item/poison") == NULL);
+
+    ordinal_record(0, "0", "item/zero", 0x10);
+    ordinal_record(1, "1", "item/one", 0x20);
+    CHECK(settings_load_subtree("custom_settings") == 0);
+    const struct zmk_custom_setting *zero = zmk_custom_setting_keyspace_find(&keys, "item/zero");
+    const struct zmk_custom_setting *one = zmk_custom_setting_keyspace_find(&keys, "item/one");
+    CHECK(zero == &keys.slots[0].setting && one == &keys.slots[1].setting);
+    ordinal_payload(zero, "item/zero", 0x10);
+    ordinal_payload(one, "item/one", 0x20);
+
+    const char *invalid[] = {
+        "",
+        "x",
+        "-1",
+        "0x0",
+        "1z",
+        "2",
+        "2147483648",
+        "4294967295",
+        "4294967296",
+        "4294967297",
+        "18446744073709551616",
+        "9999999999999999999999999999999999999999999999999999999999999999",
+    };
+    for (size_t i = 0; i < ARRAY_SIZE(invalid); i++) {
+        ordinal_record(2, invalid[i], "item/poison", 0x90);
+        CHECK(settings_load_subtree("custom_settings") == 0);
+        printk("ordinal refusal case=%u payload_reads=%u time=%lld\n", (unsigned)i, extra[2].reads,
+               k_uptime_get());
+        CHECK(extra[2].reads == 0);
+        CHECK(zmk_custom_setting_keyspace_find(&keys, "item/poison") == NULL);
+        CHECK(zmk_custom_setting_keyspace_find(&keys, "item/zero") == zero);
+        CHECK(zmk_custom_setting_keyspace_find(&keys, "item/one") == one);
+        ordinal_payload(zero, "item/zero", 0x10);
+        ordinal_payload(one, "item/one", 0x20);
+        CHECK(value(first) == 20 && value(second) == 21 && initialized == 1);
+    }
+
+    /* Decimal leading zeros remain supported for both valid boundary slots. */
+    ordinal_record(2, "0001", "item/one", 0x22);
+    CHECK(settings_load_subtree("custom_settings") == 0 && extra[2].reads == 1);
+    ordinal_payload(one, "item/one", 0x22);
+    ordinal_payload(zero, "item/zero", 0x10);
+    ordinal_record(2, "0000", "item/zero", 0x12);
+    CHECK(settings_load_subtree("custom_settings") == 0 && extra[2].reads == 1);
+    ordinal_payload(zero, "item/zero", 0x12);
+    ordinal_payload(one, "item/one", 0x20);
+    CHECK(value(first) == 20 && value(second) == 21 && initialized == 1);
+    printk("PASS keyspace ordinal load rejects malformed/overflow/capacity records; "
+           "valid boundary slots and independent state preserved time=%lld\n",
+           k_uptime_get());
+}
 #endif
 
 int main(void) {
@@ -577,6 +882,12 @@ int main(void) {
         blob_error(false);
     } else if (!strcmp(operation, "keyspace-error")) {
         blob_error(true);
+    } else if (!strcmp(operation, "keyspace-ordinal")) {
+        keyspace_ordinals();
+    } else if (!strcmp(operation, "array-ordinal")) {
+        array_ordinals();
+    } else if (!strcmp(operation, "rename-error") || !strcmp(operation, "rename-large-error")) {
+        keyspace_rename_failure(!strcmp(operation, "rename-large-error"));
 #endif
     } else {
         CHECK(!strcmp(operation, "save") || !strcmp(operation, "discard") ||

@@ -26,7 +26,7 @@ for variant in core features; do
     cases=(control scope save discard reset discard-error persist-error missing queue-scalar memory-guard)
     if [ "$variant" = features ]; then
         features=ON
-        cases+=(array-error blob-error keyspace-error queue-array queue-blob queue-keyspace)
+        cases+=(array-error blob-error keyspace-error queue-array queue-blob queue-keyspace keyspace-ordinal rename-error rename-large-error array-ordinal)
     fi
     args=()
     if [ -n "${CUSTOM_SETTINGS_SOURCE_DIR:-}" ]; then

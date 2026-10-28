@@ -590,7 +590,11 @@ bool keyspace_parse_ordinal_name(const struct zmk_custom_setting_keyspace *keysp
         if (*p < '0' || *p > '9') {
             return false;
         }
-        value = value * 10 + (uint32_t)(*p - '0');
+        uint32_t digit = (uint32_t)(*p - '0');
+        if (value > (UINT32_MAX - digit) / 10U) {
+            return false;
+        }
+        value = value * 10U + digit;
     }
 
     *out_index = value;

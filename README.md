@@ -95,9 +95,8 @@ not use to shrink flash/RAM:
 
 Disable any feature your firmware doesn't actually register settings for —
 each one you turn off drops its translation unit from the build entirely (the
-module is split one file per feature; see
-[`docs/design/feature-gating-and-modularization.md`](docs/design/feature-gating-and-modularization.md)),
-shrinking flash and RAM. Registering a setting with a macro whose feature is
+module is split one file per feature), shrinking flash and RAM. The table
+above describes the current gates. Registering a setting with a macro whose feature is
 disabled fails to *build* (a `BUILD_ASSERT` in the macro names the missing
 `CONFIG_...`), not to link, so a misconfigured build is easy to diagnose.
 
@@ -690,8 +689,12 @@ int ret = zmk_custom_setting_keyspace_create(
 zmk_custom_setting_keyspace_rename(&my_macros, "macro/my-macro-1", "macro/greeting",
                                    ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
 /* Same slot, storage record and value under the new key, in one write.
- * -ENOENT / -EEXIST / -ENAMETOOLONG / -EINVAL / -ENOSPC as above; on failure
- * the entry is unchanged. */
+ * -ENOENT / -EEXIST / -ENAMETOOLONG / -EINVAL / -ENOSPC as above:
+ * validation/allocation refusal leaves the entry unchanged.
+ * A PERSIST backend error retains the new RAM key as dirty. A backend
+ * refusal before writing keeps the previous durable key; physical errors
+ * do not guarantee atomic durability. Save retries; discard reloads the
+ * persisted key. No changed event is raised for a failed write. */
 
 zmk_custom_setting_keyspace_delete(&my_macros, "macro/greeting");
 /* -ENOENT if the key has no live slot. */
@@ -699,6 +702,15 @@ zmk_custom_setting_keyspace_delete(&my_macros, "macro/greeting");
 
 A rename keeps the slot index, so anything that refers to an entry by slot
 (such as a keymap parameter) keeps pointing at it.
+
+Stored keyspace names use the decimal slot ordinal (`<key_prefix>#<index>`).
+Loading accepts only decimal digits whose value fits uint32 and is less than
+`max_entries`; leading zeros are allowed. Empty, non-decimal, out-of-capacity
+or overflowing ordinals are ignored before reading the payload. They cannot
+wrap around to claim or overwrite another slot. The owner settings-boundary
+fixture exercises this through the real Zephyr settings load handler with a
+controlled backend; physical NVS corruption and retention remain separate
+acceptance checks.
 
 For a `BYTES`/`STRING` keyspace, `max_size` can exceed
 `CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE` exactly like
@@ -775,6 +787,15 @@ zmk_custom_setting_array_insert_at(layers, 1, &ZMK_CUSTOM_SETTING_VALUE_INT32(9)
 struct zmk_custom_setting_value removed;
 zmk_custom_setting_array_remove_at(layers, 1, &removed, ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY);
 ```
+
+Stored array element names use a decimal index (`<array_key>/<index>`).
+The complete name must fit `CONFIG_ZMK_CUSTOM_SETTINGS_KEY_MAX_LEN`, and
+the index must fit uint32 and the array capacity. Overflowing, non-decimal
+or overlong stored names are ignored before payload reads, so they cannot
+alias a valid element by wrapping or ignoring a suffix. Leading zeros remain
+accepted for valid indices. The owner's real settings-load fixture verifies
+these boundaries with a controlled backend; physical storage acceptance is
+separate.
 
 `struct zmk_custom_setting_value` is sized by
 `CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE`, so declaring one on the stack
@@ -1010,6 +1031,13 @@ whole Studio RPC surface — including reading and **writing a split peripheral'
 settings across the wired split relay** — with no physical hardware, using the
 [Renode](https://renode.io/) emulator via `west zmk-renode-test` (provided by
 `zmk-west-commands`).
+
+The runner supplies `renode_harness` from its selected test workspace on
+`PYTHONPATH`. For direct execution, add that checkout's `scripts/lib/renode`
+directory to `PYTHONPATH`; resolve the checkout with
+`west list zmk-west-commands -f "{abspath}"` from the prepared test workspace.
+The repository's `dependencies/zmk-west-commands/scripts/lib/renode` directory
+is also supported for an isolated local test workspace.
 
 It boots two real firmware images on one Renode session: a wired-split **central**
 that answers ZMK Studio over the emulated USB CDC, and a relay-enabled
