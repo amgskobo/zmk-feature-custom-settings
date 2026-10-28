@@ -1038,6 +1038,9 @@ directory to `PYTHONPATH`; resolve the checkout with
 `west list zmk-west-commands -f "{abspath}"` from the prepared test workspace.
 The repository's `dependencies/zmk-west-commands/scripts/lib/renode` directory
 is also supported for an isolated local test workspace.
+The fixture resolves the Studio schema through `west list zmk-studio-messages`,
+so both parent and isolated workspaces use their actual selected dependency.
+A missing or invalid selection stops setup instead of choosing another cached schema.
 
 It boots two real firmware images on one Renode session: a wired-split **central**
 that answers ZMK Studio over the emulated USB CDC, and a relay-enabled

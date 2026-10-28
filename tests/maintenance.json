@@ -20,6 +20,12 @@
     "Physical USB/BLE/split delivery, timing, power and retention require matching production-board evidence."
   ],
   "native_verification": "tests/native_verifier.py: actual exit, registered test completion, raw ordered logs, unchanged snapshots, identical binary repeated three times.",
+  "renode_schema_selection": {
+    "fixture": "tests/test_renode_proto_paths.py and tests/renode/proto_paths.py",
+    "contract": "Resolve the actual selected west Studio project in parent and isolated workspaces; refuse failed, ambiguous, relative or incomplete selections; retain independent calls and recovery without a stale recursive fallback.",
+    "entry": "Included in tests/test_owner.py; the complete Renode wired-split smoke and owner RPC suite remain separate.",
+    "regression": "The original fixture passed all generic smoke checks but ran zero module cases because it searched only beneath the module root in a parent workspace. Identical-binary before runs retain that setup failure."
+  },
   "regression_fixtures": [
     {
       "fixture": "tests/support/custom_settings_handler_assertions_2.inc: custom_settings_quiet_operations (inside checked public_suppress init)",

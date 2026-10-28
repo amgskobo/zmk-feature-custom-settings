@@ -67,6 +67,7 @@ except ImportError:  # pragma: no cover - local-dev fallback
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import custom_settings_usb_wired_split_lib as splitlib  # noqa: E402
+from proto_paths import resolve_studio_proto_dir  # noqa: E402
 
 SUBSYSTEM_IDENTIFIER = "cormoran_custom_settings"
 # Settings all live under this custom_subsystem_id namespace (src/test/
@@ -98,7 +99,7 @@ def _elf(env_name: str, default_rel: str) -> Path:
 
 
 def _load_protos():
-    studio_proto_dir = rh.find_studio_proto_dir(REPO_ROOT)
+    studio_proto_dir = resolve_studio_proto_dir(REPO_ROOT)
     studio_pb2 = rh.load_studio_pb2(studio_proto_dir)  # also puts out_dir on sys.path
     import custom_pb2  # noqa: E402  (compiled alongside studio_pb2)
 

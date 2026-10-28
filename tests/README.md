@@ -2,6 +2,13 @@
 
 This repository owns its executable test logic and fixtures under `tests/`.
 
+The Renode wired-split fixture resolves `zmk-studio-messages` through the actual
+west project selection, supporting parent and isolated workspaces. It refuses
+failed, ambiguous or incomplete selections instead of choosing a stale schema
+from a recursive directory search. `test_renode_proto_paths.py` retains nine
+selection/error/recovery controls and is included in the canonical owner entry.
+These controls do not replace the complete Renode smoke and module RPC suite.
+
 ## Current test ownership and compatibility
 
 This owner supports DYA custom Studio RPC. Stock ZMK is NOT APPLICABLE;
