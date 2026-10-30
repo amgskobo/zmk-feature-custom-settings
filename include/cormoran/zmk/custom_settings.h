@@ -877,6 +877,11 @@ int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *sett
                                            const struct zmk_custom_setting_value *value,
                                            uint32_t array_size,
                                            enum zmk_custom_setting_write_mode mode);
+/* Array structural mutations (push/pop/insert/remove and length-changing
+ * write_array_element) accept MEMORY/PERSIST only. TEMPORARY can override an
+ * existing element without changing length. Invalid modes leave state intact.
+ * Tail selection and mutation are serialized; PERSIST failures retain applied
+ * dirty RAM changes and do not promise atomic storage durability. */
 /* Append one value to an array setting and grow the active length by one. */
 int zmk_custom_setting_array_push_back(const struct zmk_custom_setting *setting,
                                        const struct zmk_custom_setting_value *value,
@@ -1267,6 +1272,10 @@ struct zmk_custom_setting_keyspace {
  * - read/write it with the ordinary zmk_custom_setting_read/write API
  * (values are always typed/validated as keyspace->value_type, never BYTES,
  * for a BYTES-declared keyspace this is a no-op distinction). */
+/* Create and rename require MEMORY/PERSIST. TEMPORARY changes payload values,
+ * not keyspace membership or names. Returned slot handles are borrowed: do not
+ * retain them across deletion/reuse by another caller. Prefer by-key operations
+ * for lookup and mutation within one guard. */
 int zmk_custom_setting_keyspace_create(struct zmk_custom_setting_keyspace *keyspace,
                                        const char *key,
                                        const struct zmk_custom_setting_value *value,

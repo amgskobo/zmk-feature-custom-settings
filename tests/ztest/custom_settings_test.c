@@ -2939,6 +2939,8 @@ static int test_initialized_event(void) {
     return 0;
 }
 
+#include "../support/behavior_load_cases.inc"
+
 static int custom_settings_test_init(void) {
     int ret = test_settings_backend_init();
     if (ret < 0) {
@@ -3056,6 +3058,11 @@ static int custom_settings_test_init(void) {
     }
 
 #if IS_ENABLED(CONFIG_ZMK_BEHAVIOR_LOCAL_IDS)
+    ret = test_persisted_behavior_before_ids();
+    if (ret) {
+        return ret;
+    }
+
     return test_behavior_value_type();
 #else
     return 0;

@@ -1,5 +1,7 @@
 #include "init_result.h"
 /* SPDX-License-Identifier: MIT */
+#include "chunk_identity_cases.inc"
+
 static int custom_settings_chunked_rpc_test_init(void) {
     const struct zmk_custom_setting *setting = zmk_custom_setting_find("test", "bytes_value");
     if (!setting) {
@@ -104,6 +106,11 @@ static int custom_settings_chunked_rpc_test_init(void) {
     ret = zmk_custom_setting_reset(setting);
     if (ret < 0) {
         return ret;
+    }
+
+    int identity_result = custom_settings_chunk_identity_case();
+    if (identity_result) {
+        return identity_result;
     }
 
     LOG_INF("PASS: custom_settings_chunked_rpc rpc=030201->090807 internal=070809");

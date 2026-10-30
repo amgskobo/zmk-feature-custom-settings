@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package cormoran.zmk.custom_settings;
 
+// Other numeric values are rejected without a registry mutation.
 enum SettingWriteMode {
     // Update RAM only. The value can later be saved or discarded.
     SETTING_WRITE_MODE_MEMORY = 0;

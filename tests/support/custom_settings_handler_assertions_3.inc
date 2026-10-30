@@ -73,6 +73,19 @@ static int custom_settings_split_peripheral_relay_test_init(void) {
         return -EINVAL;
     }
 
+    /* The actual relay codec must not normalize an unknown mode to MEMORY. */
+    request.request_type.write_setting.mode = (cormoran_zmk_custom_settings_SettingWriteMode)2;
+    request.request_type.write_setting.value.value_type.int32_value = 67;
+    resp = (cormoran_zmk_custom_settings_Response)cormoran_zmk_custom_settings_Response_init_zero;
+    ret = relay_test_process_request(&request, &resp);
+    if (ret != -EINVAL || zmk_custom_setting_read(setting, &value) || value.int32_value != 66) {
+        LOG_ERR("Split peripheral accepted an invalid write mode");
+        return -EINVAL;
+    }
+    request.request_type.write_setting.mode =
+        cormoran_zmk_custom_settings_SettingWriteMode_SETTING_WRITE_MODE_MEMORY;
+    request.request_type.write_setting.value.value_type.int32_value = 66;
+
     printk("PASS: split_peripheral_relay\n");
 
     ret = zmk_custom_setting_reset(array_setting);

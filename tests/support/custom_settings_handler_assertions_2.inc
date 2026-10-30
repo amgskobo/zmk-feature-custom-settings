@@ -10,6 +10,8 @@
  * production entry path - and asserts the payload reaches the scratch. The
  * pre-fix code passes every other native test but fails here.
  */
+#include "rpc_write_mode_cases.inc"
+
 static int custom_settings_request_decode_regression_test_init(void) {
     static uint8_t enc_buf[64];
     static struct bounded_decode_scratch enc_scratch = {.buf = enc_buf,
@@ -95,6 +97,11 @@ static int custom_settings_request_decode_regression_test_init(void) {
         LOG_ERR("request decode regression: create_setting payload lost (size=%u)",
                 (unsigned)g_write_value_decode_scratch.size);
         return -EINVAL;
+    }
+
+    int invalid_mode_result = custom_settings_invalid_write_modes();
+    if (invalid_mode_result) {
+        return invalid_mode_result;
     }
 
     LOG_INF("PASS: custom_settings_request_decode_regression write=%s create=%u bytes", payload,

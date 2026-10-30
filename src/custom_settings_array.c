@@ -51,6 +51,7 @@
  */
 struct zmk_custom_setting_array_view_slot {
     bool in_use;
+    uint32_t notification_refs;
     /* A view is a runtime-built RAM instance of the (normally const/flash)
      * struct zmk_custom_setting, so it embeds its own state block; the only
      * view state that actually matters is the TEMPORARY_ACTIVE flag +
@@ -69,6 +70,7 @@ static struct zmk_custom_setting_array_view_slot
 struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *array_descriptor,
                                               uint32_t index) {
     struct zmk_custom_setting_array_view_slot *free_slot = NULL;
+    struct zmk_custom_setting_array_view_slot *recyclable = NULL;
 
     for (size_t i = 0; i < ARRAY_SIZE(array_view_pool); i++) {
         struct zmk_custom_setting_array_view_slot *slot = &array_view_pool[i];
@@ -76,13 +78,16 @@ struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *a
             slot->view.array_index == index) {
             return &slot->view;
         }
+        if (!recyclable && slot->in_use && slot->notification_refs == 0) {
+            recyclable = slot;
+        }
         if (!free_slot && !slot->in_use) {
             free_slot = slot;
         }
     }
 
     if (!free_slot) {
-        /* Pool exhausted: recycle slot 0. Before overwriting it, release any
+        /* Pool exhausted: recycle the first unretained slot. Before overwriting it, release any
          * temporary override the evicted view still owns. Ownership in
          * temp_slots is tracked by view pointer, so without this the evicted
          * element's temp slot would be leaked forever (in_use, but its owner
@@ -92,7 +97,10 @@ struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *a
          * the evicted (array, index) will observe the override cleared along
          * with the value being redirected to the new element - an inherent
          * limitation of holding a pointer past pool eviction. */
-        free_slot = &array_view_pool[0];
+        if (!recyclable) {
+            return NULL;
+        }
+        free_slot = recyclable;
         clear_temporary_locked(&free_slot->view);
     }
 
@@ -109,6 +117,28 @@ struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *a
     return &free_slot->view;
 }
 
+/* A synchronous event must retain its borrowed view from the guarded
+ * mutation until every listener returns. Do not hold a registry lock while
+ * dispatching: callbacks may read/write settings or wait on settings work. */
+void array_view_retain_locked(const struct zmk_custom_setting *setting) {
+    for (size_t i = 0; i < ARRAY_SIZE(array_view_pool); i++) {
+        if (setting == &array_view_pool[i].view) {
+            __ASSERT(array_view_pool[i].notification_refs < UINT32_MAX, "view retain overflow");
+            array_view_pool[i].notification_refs++;
+            return;
+        }
+    }
+}
+void array_view_release_locked(const struct zmk_custom_setting *setting) {
+    for (size_t i = 0; i < ARRAY_SIZE(array_view_pool); i++) {
+        if (setting == &array_view_pool[i].view) {
+            __ASSERT(array_view_pool[i].notification_refs > 0, "unbalanced view release");
+            array_view_pool[i].notification_refs--;
+            return;
+        }
+    }
+}
+
 /* Non-static: the core flag helpers (set_setting_dirty/setting_is_dirty/
  * setting_has_persistent_value/set_setting_has_persistent_value in
  * custom_settings.c) call these for an array element. Declared in
@@ -123,6 +153,9 @@ bool *array_has_persistent_slot(const struct zmk_custom_setting *setting) {
 
 const struct zmk_custom_setting *zmk_custom_setting_find_array(const char *custom_subsystem_id,
                                                                const char *key) {
+    if (!key) {
+        return NULL;
+    }
     ZMK_CUSTOM_SETTING_FOREACH(setting) {
         if (!zmk_custom_setting_is_array(setting)) {
             continue;
@@ -245,8 +278,9 @@ static int delete_inactive_array_values_locked(const struct zmk_custom_setting *
             continue;
         }
 
-        struct zmk_custom_setting *view =
-            array_view_acquire((struct zmk_custom_setting *)array_descriptor, index);
+        struct zmk_custom_setting element = *array_descriptor;
+        element.array_index = index;
+        const struct zmk_custom_setting *view = &element;
         char name[SETTINGS_MAX_NAME_LEN];
         int ret = setting_storage_name(view, name, sizeof(name));
         if (ret < 0) {
@@ -286,8 +320,9 @@ int save_array_locked(const struct zmk_custom_setting *array_descriptor) {
     }
 
     for (uint32_t index = 0; index < array_size; index++) {
-        struct zmk_custom_setting *view =
-            array_view_acquire((struct zmk_custom_setting *)array_descriptor, index);
+        struct zmk_custom_setting element = *array_descriptor;
+        element.array_index = index;
+        const struct zmk_custom_setting *view = &element;
         char name[SETTINGS_MAX_NAME_LEN];
         ret = setting_storage_name(view, name, sizeof(name));
         if (ret < 0) {
@@ -316,154 +351,151 @@ int save_array_locked(const struct zmk_custom_setting *array_descriptor) {
 
 int zmk_custom_setting_read_array_by_key(const char *custom_subsystem_id, const char *key,
                                          uint32_t index, struct zmk_custom_setting_value *value) {
+    custom_settings_memory_lock();
     const struct zmk_custom_setting *setting =
         zmk_custom_setting_find_array_element(custom_subsystem_id, key, index);
-    if (!setting) {
-        return -ENOENT;
-    }
-
-    return zmk_custom_setting_read(setting, value);
+    int ret = setting ? zmk_custom_setting_read(setting, value) : -ENOENT;
+    custom_settings_memory_unlock();
+    return ret;
 }
 
 int zmk_custom_setting_write_array_by_key(const char *custom_subsystem_id, const char *key,
                                           uint32_t index,
                                           const struct zmk_custom_setting_value *value,
                                           enum zmk_custom_setting_write_mode mode) {
+    custom_settings_state_lock();
     const struct zmk_custom_setting *setting =
         zmk_custom_setting_find_array_element(custom_subsystem_id, key, index);
-    if (!setting) {
-        return -ENOENT;
+    retain_setting_notification_locked(setting);
+    int ret = setting ? zmk_custom_setting_validate(setting, value) : -ENOENT;
+    if (ret == 0) {
+        ret =
+            index < setting->array_state->size ? write_value_locked(setting, value, mode) : -ENOENT;
     }
-
-    return zmk_custom_setting_write(setting, value, mode);
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
+    return ret;
 }
 
-int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *const_setting,
-                                           const struct zmk_custom_setting_value *value,
-                                           uint32_t array_size,
-                                           enum zmk_custom_setting_write_mode mode) {
-    if (!const_setting || !value) {
-        return -EINVAL;
-    }
+/* Structural changes have no temporary length/ordering backing store. */
+static bool structural_write_mode(enum zmk_custom_setting_write_mode mode) {
+    return mode == ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY ||
+           mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST;
+}
 
-    struct zmk_custom_setting *setting = (struct zmk_custom_setting *)const_setting;
+/* Caller holds the paired guard from selection through mutation. */
+static int write_array_element_locked(const struct zmk_custom_setting *setting,
+                                      const struct zmk_custom_setting_value *value,
+                                      uint32_t array_size,
+                                      enum zmk_custom_setting_write_mode mode) {
     if (!zmk_custom_setting_is_array(setting) || setting->array_index >= array_size) {
         return -EINVAL;
     }
-
+    if (!structural_write_mode(mode) && (mode != ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY ||
+                                         array_size != setting->array_state->size)) {
+        return -EINVAL;
+    }
     int ret = validate_array_size(setting, array_size);
-    if (ret < 0) {
-        return ret;
-    }
-
-    ret = zmk_custom_setting_validate(setting, value);
-    if (ret < 0) {
-        return ret;
-    }
-
-    custom_settings_state_lock();
-    set_array_memory_size_locked(setting, array_size);
-
-    ret = write_value_locked(setting, value, mode);
-
-    custom_settings_state_unlock();
-
     if (ret == 0) {
-        raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                           ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                           : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
+        ret = zmk_custom_setting_validate(setting, value);
     }
+    if (ret < 0) {
+        return ret;
+    }
+    if (mode != ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY) {
+        set_array_memory_size_locked(setting, array_size);
+    }
+    return write_value_locked(setting, value, mode);
+}
 
+int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *setting,
+                                           const struct zmk_custom_setting_value *value,
+                                           uint32_t array_size,
+                                           enum zmk_custom_setting_write_mode mode) {
+    if (!setting || !value) {
+        return -EINVAL;
+    }
+    custom_settings_state_lock();
+    retain_setting_notification_locked(setting);
+    int ret = write_array_element_locked(setting, value, array_size, mode);
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
     return ret;
 }
 
 int zmk_custom_setting_array_push_back(const struct zmk_custom_setting *setting,
                                        const struct zmk_custom_setting_value *value,
                                        enum zmk_custom_setting_write_mode mode) {
-    if (!setting || !value || !zmk_custom_setting_is_array(setting)) {
+    if (!setting || !value || !zmk_custom_setting_is_array(setting) ||
+        !structural_write_mode(mode)) {
         return -EINVAL;
     }
-
     custom_settings_state_lock();
-    uint32_t array_size = setting->array_state->size;
-    uint32_t array_max_size = setting->array_state->max_size;
-    custom_settings_state_unlock();
-
-    if (array_size >= array_max_size) {
-        return -ERANGE;
+    uint32_t size = setting->array_state->size;
+    int ret = -ERANGE;
+    const struct zmk_custom_setting *tail = NULL;
+    if (size < setting->array_state->max_size) {
+        tail = array_view_acquire(setting, size);
+        if (tail) {
+            retain_setting_notification_locked(tail);
+            ret = write_array_element_locked(tail, value, size + 1, mode);
+        } else {
+            ret = -ENOMEM;
+        }
     }
-
-    const struct zmk_custom_setting *tail = zmk_custom_setting_find_array_element(
-        setting->custom_subsystem_id, setting->array_key, array_size);
-    if (!tail) {
-        return -ENOENT;
-    }
-
-    return zmk_custom_setting_write_array_element(tail, value, array_size + 1, mode);
+    finish_setting_change_locked(tail,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
+    return ret;
 }
 
-int zmk_custom_setting_array_pop_back(const struct zmk_custom_setting *const_setting,
+int zmk_custom_setting_array_pop_back(const struct zmk_custom_setting *setting,
                                       struct zmk_custom_setting_value *value,
                                       enum zmk_custom_setting_write_mode mode) {
-    if (!const_setting || !zmk_custom_setting_is_array(const_setting)) {
+    if (!setting || !zmk_custom_setting_is_array(setting) || !structural_write_mode(mode)) {
         return -EINVAL;
     }
-
-    struct zmk_custom_setting *setting = (struct zmk_custom_setting *)const_setting;
-
     custom_settings_state_lock();
-    uint32_t array_size = setting->array_state->size;
-    if (array_size == 0) {
-        custom_settings_state_unlock();
+    retain_setting_notification_locked(setting);
+    uint32_t size = setting->array_state->size;
+    if (size == 0) {
+        finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                     false);
         return -ENOENT;
     }
-    custom_settings_state_unlock();
-
-    const struct zmk_custom_setting *tail_const = zmk_custom_setting_find_array_element(
-        setting->custom_subsystem_id, setting->array_key, array_size - 1);
-    if (!tail_const) {
-        return -ENOENT;
+    struct zmk_custom_setting *tail = array_view_acquire(setting, size - 1);
+    if (!tail) {
+        finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                     false);
+        return -ENOMEM;
     }
-
-    struct zmk_custom_setting *tail = (struct zmk_custom_setting *)tail_const;
-
-    custom_settings_state_lock();
     if (value) {
         copy_value(value, effective_value(tail));
     }
-
-    set_array_memory_size_locked(setting, array_size - 1);
+    set_array_memory_size_locked(setting, size - 1);
     clear_temporary_locked(tail);
-
-    int ret = 0;
-    switch (mode) {
-    case ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY:
-        break;
-    case ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST:
-        ret = save_setting_locked(tail);
-        break;
-    case ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY:
-        break;
-    default:
-        ret = -EINVAL;
-        break;
-    }
-
-    custom_settings_state_unlock();
-
-    if (ret == 0) {
-        raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                           ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                           : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
-    }
-
+    int ret = mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST ? save_setting_locked(tail) : 0;
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
     return ret;
 }
 
 int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_setting,
                                        uint32_t index, const struct zmk_custom_setting_value *value,
                                        enum zmk_custom_setting_write_mode mode) {
-    if (!const_setting || !value || !zmk_custom_setting_is_array(const_setting)) {
+    if (!const_setting || !value || !zmk_custom_setting_is_array(const_setting) ||
+        !structural_write_mode(mode)) {
         return -EINVAL;
     }
 
@@ -474,15 +506,18 @@ int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_se
     }
 
     custom_settings_state_lock();
+    retain_setting_notification_locked(setting);
     struct zmk_custom_setting_array_state *array_state = setting->array_state;
     uint32_t array_size = array_state->size;
 
     if (index > array_size) {
-        custom_settings_state_unlock();
+        finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                     false);
         return -ERANGE;
     }
     if (array_size >= array_state->max_size) {
-        custom_settings_state_unlock();
+        finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                     false);
         return -ERANGE;
     }
 
@@ -496,25 +531,22 @@ int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_se
     if (move_count > 0) {
         memmove(&array_state->values[index + 1], &array_state->values[index],
                 move_count * sizeof(array_state->values[0]));
-        memmove(&array_state->dirty[index + 1], &array_state->dirty[index],
-                move_count * sizeof(array_state->dirty[0]));
-        memmove(&array_state->has_persistent[index + 1], &array_state->has_persistent[index],
-                move_count * sizeof(array_state->has_persistent[0]));
         clear_temporary_past_size_locked(array_state, index);
     }
 
     copy_value(&array_state->values[index], value);
-    array_state->dirty[index] = true;
-    array_state->has_persistent[index] = false;
+    /* Dirty follows changed values; persistence belongs to storage indices. */
+    for (uint32_t i = index; i <= array_size; i++) {
+        array_state->dirty[i] = true;
+    }
     array_state->size = array_size + 1;
 
-    struct zmk_custom_setting *view = array_view_acquire(setting, index);
     ret = 0;
     switch (mode) {
     case ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY:
         break;
     case ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST:
-        ret = save_setting_locked(view);
+        ret = save_setting_locked(setting);
         break;
     case ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY:
         /* Insertion always establishes a real memory value; "temporary
@@ -525,37 +557,42 @@ int zmk_custom_setting_array_insert_at(const struct zmk_custom_setting *const_se
         ret = -EINVAL;
         break;
     }
-    custom_settings_state_unlock();
-
-    if (ret == 0) {
-        raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                           ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                           : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
-    }
-
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
     return ret;
 }
 
 int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *const_setting,
                                        uint32_t index, struct zmk_custom_setting_value *out_value,
                                        enum zmk_custom_setting_write_mode mode) {
-    if (!const_setting || !zmk_custom_setting_is_array(const_setting)) {
+    if (!const_setting || !zmk_custom_setting_is_array(const_setting) ||
+        !structural_write_mode(mode)) {
         return -EINVAL;
     }
 
     struct zmk_custom_setting *setting = (struct zmk_custom_setting *)const_setting;
 
     custom_settings_state_lock();
+    retain_setting_notification_locked(setting);
     struct zmk_custom_setting_array_state *array_state = setting->array_state;
     uint32_t array_size = array_state->size;
 
     if (index >= array_size) {
-        custom_settings_state_unlock();
+        finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                     false);
         return -ENOENT;
     }
 
     if (out_value) {
         struct zmk_custom_setting *removed_view = array_view_acquire(setting, index);
+        if (!removed_view) {
+            finish_setting_change_locked(setting, ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED, false,
+                                         false);
+            return -ENOMEM;
+        }
         copy_value(out_value, effective_value(removed_view));
     }
     clear_temporary_past_size_locked(array_state, index);
@@ -566,23 +603,21 @@ int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *const_se
     if (move_count > 0) {
         memmove(&array_state->values[index], &array_state->values[index + 1],
                 move_count * sizeof(array_state->values[0]));
-        memmove(&array_state->dirty[index], &array_state->dirty[index + 1],
-                move_count * sizeof(array_state->dirty[0]));
-        memmove(&array_state->has_persistent[index], &array_state->has_persistent[index + 1],
-                move_count * sizeof(array_state->has_persistent[0]));
         clear_temporary_past_size_locked(array_state, array_size - 1);
     }
 
     array_state->size = array_size - 1;
-    array_state->dirty[array_size - 1] = true;
+    /* Stored records remain at their original indices until save succeeds. */
+    for (uint32_t i = index; i < array_size; i++) {
+        array_state->dirty[i] = true;
+    }
 
-    struct zmk_custom_setting *tail_view = array_view_acquire(setting, array_size - 1);
     int ret = 0;
     switch (mode) {
     case ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY:
         break;
     case ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST:
-        ret = save_setting_locked(tail_view);
+        ret = save_setting_locked(setting);
         break;
     case ZMK_CUSTOM_SETTING_WRITE_MODE_TEMPORARY:
         break;
@@ -590,14 +625,11 @@ int zmk_custom_setting_array_remove_at(const struct zmk_custom_setting *const_se
         ret = -EINVAL;
         break;
     }
-    custom_settings_state_unlock();
-
-    if (ret == 0) {
-        raise_setting_changed(setting, mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
-                                           ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
-                                           : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED);
-    }
-
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
     return ret;
 }
 

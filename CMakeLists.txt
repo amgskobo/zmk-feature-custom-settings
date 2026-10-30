@@ -5,7 +5,7 @@ if(CONFIG_ZMK_CUSTOM_SETTINGS)
     zephyr_linker_sources(ROM_SECTIONS include/linker/zmk-custom-settings-rom.ld)
     zephyr_linker_sources(DATA_SECTIONS include/linker/zmk-custom-settings.ld)
 
-    target_sources(app PRIVATE src/custom_settings.c)
+    target_sources(app PRIVATE src/custom_settings.c src/custom_settings_notify.c)
     if(CONFIG_ZMK_CUSTOM_SETTINGS_LARGE_VALUES)
         target_sources(app PRIVATE src/custom_settings_pool.c)
     endif()

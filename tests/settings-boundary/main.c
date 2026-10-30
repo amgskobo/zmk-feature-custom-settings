@@ -70,7 +70,7 @@ static struct extra_record {
     size_t size;
     bool present;
     unsigned reads;
-} extra[8];
+} extra[32];
 static bool fail_extra;
 
 K_SEM_DEFINE(load_entered, 0, 1);
@@ -216,8 +216,15 @@ static ssize_t read_value(void *context, void *data, size_t size) {
     memcpy(data, context, size);
     return size;
 }
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+static void mutation_load_read_hook(const struct extra_record *record);
+#endif
 static ssize_t read_extra(void *context, void *data, size_t size) {
     struct extra_record *record = context;
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+    mutation_load_read_hook(record);
+#endif
+
     record->reads++;
     if (read_error) {
         return read_error;
@@ -850,6 +857,10 @@ static void keyspace_ordinals(void) {
 }
 #endif
 
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+#include "mutation_cases.inc"
+#endif
+
 int main(void) {
     CHECK(settings_subsys_init() == 0);
     settings_src_register(&backend);
@@ -876,6 +887,8 @@ int main(void) {
     } else if (!strcmp(operation, "queue-array") || !strcmp(operation, "queue-blob") ||
                !strcmp(operation, "queue-keyspace")) {
         queue_cycle_case();
+    } else if (!strncmp(operation, "mutation-", 9)) {
+        mutation_cases(operation + 9);
     } else if (!strcmp(operation, "array-error")) {
         array_error();
     } else if (!strcmp(operation, "blob-error")) {

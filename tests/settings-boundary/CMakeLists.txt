@@ -10,6 +10,7 @@ if(NOT EXISTS "${ZMK_ROOT}/app/src/event_manager.c")
   message(FATAL_ERROR "ZMK_ROOT must select the resolved ZMK checkout")
 endif()
 target_sources(app PRIVATE main.c "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings.c"
+  "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_notify.c"
   "${ZMK_ROOT}/app/src/event_manager.c")
 target_include_directories(app PRIVATE ../../include "${ZMK_ROOT}/app/include")
 target_compile_definitions(app PRIVATE CONFIG_ZMK_LOG_LEVEL=0
@@ -19,6 +20,8 @@ target_compile_definitions(app PRIVATE CONFIG_ZMK_LOG_LEVEL=0
   CONFIG_ZMK_CUSTOM_SETTINGS_KEY_MAX_LEN=48
   CONFIG_ZMK_CUSTOM_SETTINGS_TEMP_SLOTS=2 CONFIG_ZMK_CUSTOM_SETTINGS_TEMP_SLOT_SIZE=32)
 if(SETTINGS_BOUNDARY_FEATURES)
+  target_link_options(zephyr_interface INTERFACE -Wl,--wrap=custom_settings_state_lock
+    -Wl,--wrap=custom_settings_state_unlock)
   target_sources(app PRIVATE "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_array.c"
     "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_pool.c"
     "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_keyspace.c"

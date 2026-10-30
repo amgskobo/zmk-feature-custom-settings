@@ -96,7 +96,7 @@ class WestCommandsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Completed core boundary scenarios=10 repeats=3", result.stdout)
         self.assertIn(
-            "Completed features boundary scenarios=20 repeats=3", result.stdout
+            "Completed features boundary scenarios=43 repeats=3", result.stdout
         )
 
     def test_zmk_build(self):

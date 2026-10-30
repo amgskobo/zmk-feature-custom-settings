@@ -98,6 +98,19 @@ int write_large_locked(const struct zmk_custom_setting *setting, const void *dat
 struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *array_descriptor,
                                               uint32_t index);
 
+/* Prevent pool recycling while an out-of-lock synchronous event uses a view.
+ * Both calls require the state mutex. A fully retained pool returns NULL from
+ * array_view_acquire; callers must handle this bounded resource failure. */
+void array_view_retain_locked(const struct zmk_custom_setting *setting);
+void array_view_release_locked(const struct zmk_custom_setting *setting);
+/* Pair these around a mutation/event. Retain with the paired guard held;
+ * finish drops it, optionally dispatches, then releases the retained view.
+ * Stable scalar/array-parent/keyspace descriptors need no view-pool retain. */
+void retain_setting_notification_locked(const struct zmk_custom_setting *setting);
+void finish_setting_change_locked(const struct zmk_custom_setting *setting,
+                                  enum zmk_custom_setting_changed_kind kind,
+                                  bool suppress_notification, bool notify);
+
 /* Per-array-element dirty/has-persistent flag storage (array_state->dirty[]/
  * has_persistent[]), the array counterpart of the scalar
  * ZMK_CUSTOM_SETTING_STATE_DIRTY/HAS_PERSISTENT flags. Caller holds
@@ -370,3 +383,25 @@ int keyspace_write_raw_payload_with_notification(const struct zmk_custom_setting
 int write_bytes_raw_with_notification(const struct zmk_custom_setting *setting, const void *data,
                                       size_t size, enum zmk_custom_setting_write_mode mode,
                                       bool suppress_notification);
+
+/* Internal mutation primitives. Caller holds the paired guard; no callbacks. */
+int write_bytes_raw_locked(const struct zmk_custom_setting *setting, const void *data, size_t size,
+                           enum zmk_custom_setting_write_mode mode);
+int keyspace_write_blob_locked(const struct zmk_custom_setting *setting, const char *key,
+                               const struct zmk_custom_setting_value *value,
+                               enum zmk_custom_setting_write_mode mode);
+/* Dispatch after releasing guards owned by the public mutation. */
+void raise_setting_changed_with_notification(const struct zmk_custom_setting *setting,
+                                             enum zmk_custom_setting_changed_kind kind,
+                                             bool suppress_notification);
+
+/* Handler staging/commit uses the same paired guard as registry mutation. */
+int write_setting_value_locked(const struct zmk_custom_setting *setting,
+                               const struct zmk_custom_setting_value *value,
+                               enum zmk_custom_setting_write_mode mode);
+int write_setting_bytes_locked(const struct zmk_custom_setting *setting, const void *data,
+                               size_t size, enum zmk_custom_setting_write_mode mode);
+int keyspace_write_raw_payload_locked(const struct zmk_custom_setting *setting, const void *data,
+                                      size_t size, enum zmk_custom_setting_write_mode mode);
+void keyspace_identity_changed_locked(void);
+uint64_t keyspace_identity_epoch_locked(void);
