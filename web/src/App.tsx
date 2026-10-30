@@ -1,12 +1,9 @@
 import { errorKind } from "./logPrivacy";
-import { Fragment, useContext, useEffect, useState } from "react";
+import { Fragment, useContext, useEffect, useRef, useState } from "react";
 import "./App.css";
+import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
 import { connect as serial_connect } from "@zmkfirmware/zmk-studio-ts-client/transport/serial";
-import {
-  ZMKConnection,
-  ZMKCustomSubsystem,
-  ZMKAppContext,
-} from "@cormoran/zmk-studio-react-hook";
+import { ZMKConnection, ZMKAppContext } from "@cormoran/zmk-studio-react-hook";
 import {
   Notification as SettingsNotification,
   Request,
@@ -118,7 +115,41 @@ function App() {
   );
 }
 
+const connectionKeys = new WeakMap<object, number>();
+let nextConnectionKey = 0;
+function connectionKey(connection: object | null | undefined): number {
+  if (!connection) return 0;
+  let key = connectionKeys.get(connection);
+  if (key === undefined) {
+    key = ++nextConnectionKey;
+    connectionKeys.set(connection, key);
+  }
+  return key;
+}
+
 export function RPCTestSection() {
+  const app = useContext(ZMKAppContext);
+  const index = app?.findSubsystem(SUBSYSTEM_IDENTIFIER)?.index;
+  const catalog = JSON.stringify(
+    app?.state.customSubsystems?.subsystems.map((s) => s.identifier) ?? []
+  );
+  const key = `${connectionKey(app?.state.connection)}:${index}:${catalog}`;
+  return <SettingsSession key={key} />;
+}
+
+function SettingsSession() {
+  const lifetime = useRef({ active: true, cancel: new Set<() => void>() });
+  useEffect(() => {
+    const session = lifetime.current;
+    session.active = true;
+    return () => {
+      session.active = false;
+      for (const cancel of [...session.cancel]) {
+        cancel();
+      }
+      session.cancel.clear();
+    };
+  }, []);
   const zmkApp = useContext(ZMKAppContext);
   const [filterCustomSubsystemId, setFilterCustomSubsystemId] = useState("");
   const [filterKey, setFilterKey] = useState("");
@@ -201,20 +232,45 @@ export function RPCTestSection() {
   };
 
   const callCustomRequest = async (request: Request): Promise<Response> => {
+    const session = lifetime.current;
+    if (!session.active) {
+      throw new Error("Settings session retired");
+    }
     const connection = zmkApp?.state.connection;
     if (!connection || !subsystem) {
       throw new Error("Custom settings subsystem is not available");
     }
 
-    const service = new ZMKCustomSubsystem(connection, subsystem.index);
     const payload = Request.encode(request).finish();
-    const responsePayload = await service.callRPC(payload);
-    if (!responsePayload) {
-      throw new Error("Empty response");
+    let retire = () => {};
+    const retired = new Promise<never>((_, reject) => {
+      retire = () => reject(new Error("Settings session retired"));
+      session.cancel.add(retire);
+    });
+    try {
+      // Own the deadline so retirement also clears its timer. The SDK
+      // service wrapper leaves its timeout pending after a completed call.
+      const response = await withTimeout(
+        Promise.race([
+          call_rpc(connection, {
+            custom: { call: { subsystemIndex: subsystem.index, payload } },
+          }),
+          retired,
+        ]),
+        LIST_REQUEST_TIMEOUT_MS,
+        "RPC request timed out"
+      );
+      const responsePayload = response.custom?.call?.payload;
+      if (!session.active) {
+        throw new Error("Settings session retired");
+      }
+      if (!responsePayload) {
+        throw new Error("Empty response");
+      }
+      return Response.decode(responsePayload);
+    } finally {
+      session.cancel.delete(retire);
     }
-
-    const decoded = Response.decode(responsePayload);
-    return decoded;
   };
 
   const subsystemIdentifierForIndex = (index: number) =>
@@ -270,6 +326,8 @@ export function RPCTestSection() {
     const waitForQuiet = scopeTargetsAll(requestScope);
     let expectedCount: number | undefined;
     let quietTimeout: ReturnType<typeof setTimeout> | undefined;
+    let collectionTimeout: ReturnType<typeof setTimeout> | undefined;
+    let collectionFailure: Error | undefined;
     let resolveList: () => void = () => {};
     let isComplete = false;
 
@@ -285,6 +343,10 @@ export function RPCTestSection() {
       if (quietTimeout) {
         clearTimeout(quietTimeout);
         quietTimeout = undefined;
+      }
+      if (collectionTimeout) {
+        clearTimeout(collectionTimeout);
+        collectionTimeout = undefined;
       }
       completionReason = reason;
       resolveList();
@@ -303,6 +365,7 @@ export function RPCTestSection() {
       type: "custom",
       subsystemIndex: subsystem.index,
       callback: (customNotification) => {
+        if (!lifetime.current.active || isComplete) return;
         let notification;
         try {
           notification = SettingsNotification.decode(
@@ -331,6 +394,19 @@ export function RPCTestSection() {
       },
     });
 
+    let subscribed = true;
+    const stopSubscription = () => {
+      if (subscribed) {
+        subscribed = false;
+        unsubscribe();
+      }
+    };
+    const retireList = () => {
+      stopSubscription();
+      completeList("session-retired");
+    };
+    lifetime.current.cancel.add(retireList);
+
     try {
       const resp = await withTimeout(
         callCustomRequest(
@@ -349,6 +425,10 @@ export function RPCTestSection() {
         throw new Error(resp.error.message || "List failed");
       }
       expectedCount = resp.status?.affectedCount;
+      collectionTimeout = setTimeout(() => {
+        collectionFailure = new Error("List notifications timed out");
+        completeList("notification-timeout");
+      }, LIST_REQUEST_TIMEOUT_MS);
 
       if (!waitForQuiet && expectedCount !== undefined) {
         if (collected.length >= expectedCount) {
@@ -358,8 +438,12 @@ export function RPCTestSection() {
         scheduleQuietResolve();
       }
       await listComplete;
+      if (!lifetime.current.active) throw new Error("Settings session retired");
+      if (collectionFailure) throw collectionFailure;
     } finally {
-      unsubscribe();
+      lifetime.current.cancel.delete(retireList);
+      stopSubscription();
+      if (collectionTimeout) clearTimeout(collectionTimeout);
       if (quietTimeout) {
         clearTimeout(quietTimeout);
       }
