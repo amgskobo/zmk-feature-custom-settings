@@ -100,7 +100,7 @@ jobs:
         # (GetDeviceInfo over USB + a peripheral keypress relayed to the central)
         # followed by this module's own tests/renode/*_test.py -- the host reads
         # AND writes the split PERIPHERAL's settings over the wired split relay.
-        uses: cormoran/zmk-west-commands/.github/actions/zmk-renode-test@main
+        uses: cormoran/zmk-west-commands/.github/actions/zmk-renode-test@536260056f362edb2092905f2a75317bc8cb9bc2
         with:
           mode: wired-split
           elf-path: build/usb-wired-central/zephyr/zmk.elf
