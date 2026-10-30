@@ -113,3 +113,9 @@ are not transactions.
 This checks the selected DYA/native_sim workspace. It does not establish older
 upstream native_posix compatibility, radio/Studio delivery, physical NVS,
 reset/power behavior or XIAO hardware acceptance.
+
+The `mutation-notify-*` scenarios exercise synchronous notification identity
+after unlock and during nested lookups, including temporary/rollback values,
+long-array persistence, bounded retained-pool exhaustion and recovery. They keep
+all earlier scenarios and run in fresh processes with the same binary three
+times. `notification_cases.inc` owns the assertions and real-kernel handoff.

@@ -920,6 +920,38 @@ without a known persisted value still use the default. These rules also apply
 to arrays, pooled large values and keyspace payloads. Scoped operations and
 array reloads can retain successful partial work; they are not transactions.
 
+Compound array tail operations and keyspace create/delete/rename hold the
+paired guard from selection through mutation. By-key read/write helpers keep
+lookup and use within one guard. Change events run after the operation releases
+its own guards; a caller's already-held outer lock remains the caller's
+responsibility. Callbacks must not wait for work that needs such an outer lock.
+
+Array insert/remove preserve persisted-record flags at their storage indices
+and mark every shifted memory value dirty. Array length/order changes and
+keyspace create/rename accept MEMORY or PERSIST only; TEMPORARY remains a
+payload override for an existing element/entry. Unsupported modes fail before
+changing state. Persistence errors retain the documented RAM-first behavior.
+Storage loading keeps the immutable array descriptor/index across a backend
+read and resolves its element under the guard only when applying that record.
+A failed initial keyspace create releases its provisional RAM slot; writes to
+an existing entry and rename retain their documented dirty RAM on a persistence
+failure. None of these operations guarantees physical atomic durability.
+
+Stored behavior IDs are type/range checked while loading, without requiring
+the settings-table behavior mapping to exist yet. Runtime writes still resolve
+the ID and validate binding parameters. An ID for a removed behavior can remain
+readable after an update; consumers must handle an unresolved binding.
+
+Unknown RPC mode numbers are rejected before mutation. Chunk staging, target
+resolution and commit share the registry guard. A continuation must retain its
+reference, total size and mode. Keyspace creation/deletion/rename or reload
+invalidates a pending keyspace transfer; the client must restart at offset zero.
+This conservatively includes unrelated keyspace lifecycle changes.
+
+Array element views can be recycled by the bounded view pool, and deleted
+keyspace slots can be reused; borrowed descriptors are not permanent identities
+across those lifecycle changes. Use by-key helpers for one guarded lookup/use.
+
 Storage/mutation operations and borrowed-value callbacks acquire Zephyr's
 settings mutex before the module state mutex to avoid a load/write lock
 inversion. This uses the internal `settings_lock` symbol, verified for the
@@ -959,6 +991,15 @@ of its **Constraints** - alongside the per-source **Value** and **Unsaved**
 columns. These metadata columns are populated when settings are loaded with
 **Include Metadata** checked (on by default); they show `—` otherwise.
 
+Connection, custom-RPC index or subsystem-catalog replacement starts a fresh
+Web session. Pending requests are retired, list subscriptions and owned timers
+are disposed, and import/chunk loops stop before any next request. A request
+already sent can still complete on the device; retirement does not roll it back.
+RPC replies have a five-second deadline. List notification collection has its
+own five-second bound after the reply, in addition to the existing quiet-window
+rule for all sources; this is not a physical transport or complete split-list
+delivery guarantee.
+
 ### Constraint-aware editing
 
 When a setting is listed or read with **Include Metadata** checked, the firmware
@@ -989,6 +1030,22 @@ npm run dev
 ```
 
 See [web/README.md](./web/README.md) for web development commands.
+
+### Array change notification lifetime
+
+Module-generated array-element change events retain their index view from the
+guarded mutation until synchronous event dispatch returns. Listeners run without
+the registry or settings mutex held and may perform nested settings lookups.
+Those lookups cannot recycle the event's target view or clear its temporary
+override. Persistence formats element storage names from local descriptors, so
+saving an array longer than the view pool does not recycle its caller's view.
+
+This retention ends when dispatch returns; it does not extend the general
+borrowed-handle lifetime or make an event a value snapshot. Deferred consumers
+must copy the public reference, rather than keep the event's pointer. If every
+view is retained, a lookup requiring another view returns `NULL`; a push that
+needs another view returns `-ENOMEM` before changing values or length. Existing
+matching views remain usable, and released views become recyclable again.
 
 ## Development
 

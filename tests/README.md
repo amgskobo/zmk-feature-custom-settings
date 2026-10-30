@@ -94,7 +94,7 @@ checks stored keyspace ordinal parsing through the production settings load
 handler. Decimal names must fit uint32 and the keyspace capacity before their
 payload is read. Invalid initial and later records cannot create a wrapped
 slot or alter valid entries and independent scalar settings; leading zeros
-remain accepted for valid slot numbers. The features binary runs twenty
+remain accepted for valid slot numbers. The features binary runs forty-three
 scenarios, with the same binary repeated three times in fresh processes.
 `ordinal_overflow_negative_control.py` restores only unchecked accumulation
 in an isolated source copy; the unchanged real-loader assertion must fail.
@@ -139,3 +139,55 @@ native scenario, wrong-role and unrelated-fixture controls.
 It runs all configured Jest scenarios in one worker process. The pre-commit
 Jest hook dispatches this same owner entry so nested workers do not multiply
 the global container budget. Build and lint retain their separate package entries.
+
+The additional `mutation-*` boundary scenarios cover serialized push/pop and
+mixed tail operations, duplicate create/rename, delete/reuse, settings-lock
+ordering, invalid structural modes and ordinal persistence flags after shifts.
+Scheduling wrappers only pause before lock acquisition or after unlock; all
+mutations use unchanged public APIs and real kernel mutexes/threads. A serial
+positive control and unchanged independent settings remain required. The same
+binary runs each scenario three times in fresh processes. The original code
+fails the fifteen regression scenarios; the positive control passes.
+
+`rpc_write_mode_cases.inc` extends the existing checked request-decode hook with
+actual encode/decode/dispatch checks for unknown mode values on all five write
+arms. The peripheral fixture checks the actual relay codec and unchanged state.
+No wire IDs, valid modes, existing hooks or snapshots are replaced.
+
+`sessionLifecycle.spec.tsx` uses the real provider and deferred transport replies
+to check connection/index/catalog retirement, no later import/chunk request,
+immediate list disposal, a bounded continuously active list, an unrelated
+provider update and StrictMode cleanup replay. It does not establish physical
+serial/BLE delivery or cancellation of a request already sent to a keyboard.
+
+`mutation-load-view` pauses a real backend record read on a sysworkq handoff
+that churns more views than the bounded pool. The loader must apply the exact
+record to its original descriptor/index and preserve the independent array.
+`chunk_identity_cases.inc` deletes/recreates a slot between real handler chunks;
+the stale commit must return `-EAGAIN` and preserve the replacement payload.
+Staging, target resolution and commit share the registry guard. Chunk frames
+must keep their reference, total size and mode; any keyspace lifecycle/reload
+invalidates a pending keyspace transfer, which must restart at offset zero.
+
+The checked core init also runs `behavior_load_cases.inc` in the local-ID
+configuration. It rejects unresolved runtime writes, loads range-valid stored
+behavior/ID values before lookup resolution and cleans up independent records.
+The completion marker is outside existing event snapshots. This preserves the
+contract proposed by upstream PR #58 without replacing any original assertion.
+
+`notification_cases.inc` adds seven boundary scenarios: a serial control,
+unlock-to-dispatch view churn, nested listener churn, temporary values, temporary
+rollback, persistence beyond the view-pool size, and full retained-pool refusal
+with recovery. The race fails three times before retention while the serial
+control passes. The final features binary runs forty-three scenarios, three
+times each. The controlled backend has room for the long-array records; its
+failure injection, prior cases and assertions remain intact. The fixture also
+verifies lock-free listeners, exact values/identities, independent settings and
+post-dispatch recycling. This is not physical delivery or retention evidence.
+
+`python3 tests/notification_view_negative_control.py ISOLATED_ARRAY_SOURCE`
+removes only the retained-view recycling guard in a separate source copy. Run
+the unchanged settings boundary entry with `CUSTOM_SETTINGS_SOURCE_DIR` selecting
+that copy and fresh evidence. The event-identity and retained-pool assertions
+must fail; the serial control and earlier boundary scenarios must still pass.
+The operator refuses to modify its owning checkout.

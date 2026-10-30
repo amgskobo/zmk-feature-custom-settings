@@ -50,6 +50,42 @@
       "contract": "The real settings load path refuses uint32 decimal overflow and incomplete bounded names before payload reads; valid element values/length/dirty state and independent settings stay exact, including first/last indices and leading zeros.",
       "negative_control": "tests/array_ordinal_negative_control.py removes checked accumulation or full termination separately in isolated src copies; unchanged owner loader assertions must fail three times per fault.",
       "limits": "Controlled Zephyr settings backend and configured name/uint32/capacity bounds, not physical NVS corruption or retention."
+    },
+    {
+      "fixture": "tests/settings-boundary/mutation_cases.inc",
+      "contract": "Compound array/keyspace operations serialize selection and mutation; invalid structural modes leave state unchanged; shifted values are dirty while persistent record flags remain ordinal.",
+      "negative_control": "Fifteen original-code failures with one passing serial control, same binary repeated three times per scenario.",
+      "limits": "Controlled scheduling/backend and actual Zephyr mutex/thread/event logic; no physical durability or transport claim."
+    },
+    {
+      "fixture": "tests/support/rpc_write_mode_cases.inc and peripheral relay checked init",
+      "contract": "Unknown write modes are rejected before mutation across public and relay codecs.",
+      "negative_control": "The original handler normalizes unknown modes to MEMORY.",
+      "limits": "Actual codec/dispatch and unchanged state; no physical transport claim."
+    },
+    {
+      "fixture": "tests/web/sessionLifecycle.spec.tsx",
+      "contract": "Retire old session replies/subscriptions/timers and prevent later import/chunk calls after connection/index/catalog replacement; bound list collection.",
+      "negative_control": "Original App fails the provider/deferred regression cases while unrelated-provider and StrictMode controls pass.",
+      "limits": "Controlled DOM and mocked transport boundary; already-sent requests cannot be recalled."
+    },
+    {
+      "fixture": "mutation-load-view and chunk_identity_cases.inc",
+      "contract": "Resolve loaded array records from immutable descriptor/index after a backend wait; stale chunk transfers cannot modify a deleted/reused keyspace slot. Guard staging, target identity and commit together.",
+      "negative_control": "Original loader is redirected by a real sysworkq view-pool churn; original chunk handler commits to a reused slot. Regression output is retained separately from positive owner results.",
+      "limits": "Synthetic backend/scheduling and actual registry/handler logic, not physical durability or USB/BLE delivery."
+    },
+    {
+      "fixture": "tests/support/behavior_load_cases.inc in the checked local-ID core init",
+      "contract": "Load range-valid persisted behavior values and behavior-ID constraints without requiring the later settings-table lookup. Runtime writes still reject unresolved IDs and invalid binding parameters; independent records and the initialized event count remain exact.",
+      "negative_control": "The same real settings-backend fixture fails before the load-validation fix because unresolved stored IDs are discarded. Existing behavior validation and event snapshots are retained.",
+      "limits": "Pinned DYA settings-table configuration and synthetic backend records; not physical reboot retention or a test of pending upstream storage redesigns."
+    },
+    {
+      "fixture": "tests/settings-boundary/notification_cases.inc",
+      "contract": "Retain array-element view identity and temporary state through synchronous out-of-lock event dispatch; format persistence names without recycling the caller view; fail a new-view push before mutation when the bounded pool is fully retained, then recover after release.",
+      "negative_control": "The unchanged real-kernel unlock handoff redirects the original notification to a different array three times, with a passing serial control. An isolated retain-guard fault must reproduce the event-identity failure. tests/notification_view_negative_control.py removes only the pool recycling guard in an isolated source copy.",
+      "limits": "Seven controlled kernel/backend scenarios and exact event/value checks; no physical transport, retention, timing or indefinite borrowed-handle guarantee."
     }
   ]
 }
