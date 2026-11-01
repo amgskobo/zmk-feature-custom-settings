@@ -34,7 +34,7 @@ import {
   scalarValueToNumber,
   validateConstraintValue,
 } from "./constraints";
-import { writeValueChunked, SINGLE_FRAME_VALUE_MAX } from "./chunkedValue";
+import { writeSettingValue, SINGLE_FRAME_VALUE_MAX } from "./chunkedValue";
 
 export const SUBSYSTEM_IDENTIFIER = "cormoran_custom_settings";
 const LIST_NOTIFICATION_TIMEOUT_MS = 750;
@@ -498,25 +498,17 @@ function SettingsSession() {
           );
         }
 
-        const resp = await callCustomRequest(
-          Request.create({
-            writeSetting: {
-              setting: {
-                customSubsystemIndex,
-                key: importedSetting.key,
-                source: importedSetting.source,
-                arrayIndex: importedSetting.arrayIndex,
-              },
-              value: exportedSettingValueToProto(importedSetting),
-              mode: writeMode,
-            },
-          })
+        await writeSettingValue(
+          callCustomRequest,
+          {
+            customSubsystemIndex,
+            key: importedSetting.key,
+            source: importedSetting.source,
+            arrayIndex: importedSetting.arrayIndex,
+          },
+          exportedSettingValueToProto(importedSetting),
+          writeMode
         );
-        if (resp.error) {
-          throw new Error(
-            `${importedSetting.customSubsystemId}/${importedSetting.key}: ${resp.error.message}`
-          );
-        }
       }
 
       setResponse(`Imported ${settings.length} setting values`);
@@ -611,10 +603,12 @@ function SettingsSession() {
         setIsLoading(true);
         setResponse(null);
         try {
-          await writeValueChunked(
+          await writeSettingValue(
             callCustomRequest,
             settingRef,
-            bytes,
+            valueType === EditorValueType.Bytes
+              ? { bytesValue: bytes }
+              : { stringValue: value },
             writeMode
           );
           setResponse(`Wrote ${bytes.length} bytes via chunked transfer`);

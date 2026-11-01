@@ -14,6 +14,7 @@ import {
   Request,
   Response,
   SettingRef,
+  SettingValue,
   SettingWriteMode,
 } from "./proto/cormoran/zmk/custom_settings/custom_settings";
 
@@ -26,6 +27,32 @@ export const SINGLE_FRAME_VALUE_MAX = 64;
 export const CHUNK_DATA_MAX = 128;
 
 export type CallRPC = (request: Request) => Promise<Response>;
+
+// Import and editor writes share the same single-frame byte ceiling. Strings
+// are bounded by UTF-8 bytes, rather than JavaScript character count.
+export async function writeSettingValue(
+  callRPC: CallRPC,
+  setting: SettingRef,
+  value: SettingValue,
+  mode: SettingWriteMode
+): Promise<void> {
+  const bytes =
+    value.bytesValue ??
+    (value.stringValue !== undefined
+      ? new TextEncoder().encode(value.stringValue)
+      : undefined);
+  if (bytes && bytes.length > SINGLE_FRAME_VALUE_MAX) {
+    if (setting.source !== undefined && setting.source !== 0) {
+      throw new Error("Large values cannot be written across the split relay");
+    }
+    await writeValueChunked(callRPC, setting, bytes, mode);
+    return;
+  }
+  const response = await callRPC(
+    Request.create({ writeSetting: { setting, value, mode } })
+  );
+  if (response.error) throw new Error(response.error.message || "Write failed");
+}
 
 // Write a large BYTES/STRING value by splitting it into CHUNK_DATA_MAX frames.
 // The first frame (offset 0) opens the transfer and declares total_size; the

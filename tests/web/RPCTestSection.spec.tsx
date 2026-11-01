@@ -1,4 +1,10 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   createConnectedMockZMKApp,
@@ -7,6 +13,8 @@ import {
 import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
 import {
   exportedSettingValueToProto,
+  createSettingsExportDocument,
+  countExportedSettings,
   parseSettingsExportJson,
   settingsExportToJson,
   settingToExportedSetting,
@@ -668,6 +676,43 @@ function lastCustomSettingsRequest(): Request {
 }
 
 describe("settings JSON conversion", () => {
+  it("round-trips distinct scalar and array values for each split source", () => {
+    const settings: Setting[] = [
+      baseSetting,
+      { ...baseSetting, source: 2, value: { int32Value: 99 } },
+      ...[false, true].map((value, index) => ({
+        ...baseSetting,
+        key: "array_value",
+        source: 0,
+        value: { arrayValue: { index, size: 2, value: { boolValue: value } } },
+      })),
+      {
+        ...baseSetting,
+        key: "array_value",
+        source: 2,
+        value: {
+          arrayValue: { index: 0, size: 1, value: { boolValue: true } },
+        },
+      },
+    ];
+    const document = createSettingsExportDocument(settings, () => "test");
+    const restored = parseSettingsExportJson(JSON.stringify(document));
+    expect(countExportedSettings(document)).toBe(5);
+    expect(restored).toEqual(
+      settings.map((setting) =>
+        settingToExportedSetting(setting, () => "test"),
+      ),
+    );
+  });
+
+  it("preserves public keys that match object prototype names", () => {
+    const setting = { ...baseSetting, key: "__proto__" };
+    const restored = parseSettingsExportJson(
+      settingsExportToJson([setting], () => "test"),
+    );
+    expect(restored).toEqual([settingToExportedSetting(setting, () => "test")]);
+  });
+
   it("exports scalar settings as typed JSON entries", () => {
     expect(settingToExportedSetting(baseSetting, () => "test")).toEqual({
       customSubsystemId: "test",
@@ -804,5 +849,65 @@ describe("settings JSON conversion", () => {
       customSubsystems: { test: [{ key: "x", type: "int32", value: 1 }] },
     });
     expect(() => parseSettingsExportJson(old)).toThrow("Unsupported version 2");
+  });
+});
+
+describe("large JSON import", () => {
+  it("imports exported bytes and UTF-8 strings through chunk requests", async () => {
+    (call_rpc as jest.Mock)
+      .mockReset()
+      .mockResolvedValue(emptyStatusResponse());
+    const app = createConnectedMockZMKApp({
+      subsystems: [SUBSYSTEM_IDENTIFIER, "test"],
+    });
+    render(
+      <ZMKAppProvider value={app}>
+        <RPCTestSection />
+      </ZMKAppProvider>,
+    );
+    await waitFor(() => expect(call_rpc).toHaveBeenCalled());
+    const bytes = Array.from({ length: 200 }, (_, index) => index & 0xff);
+    const text = "é".repeat(40);
+    const json = settingsExportToJson(
+      [
+        {
+          ...baseSetting,
+          key: "large_bytes",
+          value: { bytesValue: Uint8Array.from(bytes) },
+        },
+        { ...baseSetting, key: "large_string", value: { stringValue: text } },
+      ],
+      () => "test",
+    );
+    fireEvent.change(screen.getByLabelText(/Settings JSON/i), {
+      target: { value: json },
+    });
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("button", { name: "Import JSON" }),
+        ).toBeEnabled(),
+      { timeout: 6000 },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Import JSON" }));
+    await screen.findByText("Imported 2 setting values");
+    const requests = (call_rpc as jest.Mock).mock.calls.map(([, request]) =>
+      Request.decode(request.custom.call.payload),
+    );
+    expect(requests.filter((request) => request.writeSetting)).toHaveLength(0);
+    for (const [key, expected] of [
+      ["large_bytes", bytes],
+      ["large_string", Array.from(new TextEncoder().encode(text))],
+    ] as const) {
+      const chunks = requests.flatMap((request) =>
+        request.writeValueChunk?.setting?.key === key
+          ? [request.writeValueChunk]
+          : [],
+      );
+      expect(chunks.flatMap((chunk) => Array.from(chunk.data))).toEqual(
+        expected,
+      );
+      expect(chunks.at(-1)?.commit).toBe(true);
+    }
   });
 });

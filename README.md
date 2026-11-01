@@ -114,6 +114,11 @@ select it automatically.
 
 ### Split Keyboards
 
+The central forwards remote notifications only while Studio is unlocked. Lock
+and endpoint changes retire queued remote notifications and delayed list requests,
+including a lock followed by an unlock before the worker runs. Requests already
+sent to a peripheral cannot be recalled.
+
 For split keyboards, enable ZMK's relay-event transport on both halves:
 
 ```conf
@@ -919,6 +924,12 @@ the unsaved state. It does not announce a successful discard. Missing records
 without a known persisted value still use the default. These rules also apply
 to arrays, pooled large values and keyspace payloads. Scoped operations and
 array reloads can retain successful partial work; they are not transactions.
+Scope save/discard/reset visits an array descriptor once, including an empty
+array. Successful nonempty arrays retain their active-element affected count;
+an empty array counts as one structural target. Whole-array reset erases stored
+elements across the full capacity, including elements outside the current
+memory length. A secure keyspace requires unlock for scope mutations even when
+it currently contains no entries.
 
 Compound array tail operations and keyspace create/delete/rename hold the
 paired guard from selection through mutation. By-key read/write helpers keep
@@ -976,7 +987,7 @@ load API does not expose every backend error.
 The web UI in `web/` connects to a keyboard over serial, finds the
 `cormoran_custom_settings` subsystem, and sends typed read/write/save/discard/reset
 requests. It can also export all RPC-readable setting values as JSON and import
-that JSON back to the device using the selected write mode. Array values can be
+that JSON back to the device using the selected write mode. Large local BYTES/STRING values use chunked import, including UTF-8 byte lengths. For the same key on several split sources, JSON stores separate complete entries in a per-key array; existing single-source version-1 files remain supported. The split relay still cannot carry large chunked writes. Array values can be
 written by index or changed with push-back/pop-back commands. A "Create
 Setting" panel sends `CreateSetting` for a registered keyspace's prefix (see
 RPC-Creatable Keyspaces above), and any selected setting - including a
@@ -1032,6 +1043,11 @@ npm run dev
 See [web/README.md](./web/README.md) for web development commands.
 
 ### Array change notification lifetime
+
+The Studio notification queue copies the subsystem/key/array-index reference.
+Its worker resolves and retains a fresh view through encoding, so intervening
+view-pool reuse cannot redirect a queued notification. These notifications
+describe current state rather than a historical value snapshot.
 
 Module-generated array-element change events retain their index view from the
 guarded mutation until synchronous event dispatch returns. Listeners run without

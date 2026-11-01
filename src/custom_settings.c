@@ -1413,8 +1413,7 @@ int zmk_custom_setting_discard(const struct zmk_custom_setting *const_setting) {
         /* Called directly on the array descriptor (array_index ==
          * ZMK_CUSTOM_SETTING_ARRAY_NONE): discard every element up to the
          * (about to be restored) persistent size. Called on a single
-         * element view (from apply_scope's per-active-element expansion):
-         * discard just that element. */
+         * element view: discard just that element. */
         int ret = 0;
         bool restored_any = false;
         if (setting->array_index == ZMK_CUSTOM_SETTING_ARRAY_NONE) {
@@ -1470,10 +1469,9 @@ int zmk_custom_setting_reset(const struct zmk_custom_setting *const_setting) {
         int ret = 0;
 
         if (setting->array_index == ZMK_CUSTOM_SETTING_ARRAY_NONE) {
-            /* Whole-array reset: restore every element up to the current
-             * active size to its default and erase all persisted state,
-             * including the "_size" marker. */
-            uint32_t reset_size = array_state->size;
+            /* Inactive elements can still own persisted records or dirty RAM.
+             * Reset the full capacity before restoring the default length. */
+            uint32_t reset_size = array_state->max_size;
             for (uint32_t index = 0; index < reset_size && ret == 0; index++) {
                 struct zmk_custom_setting *view = array_view_acquire(setting, index);
                 ret = view ? reset_array_element_locked(view) : -ENOMEM;
@@ -1493,8 +1491,7 @@ int zmk_custom_setting_reset(const struct zmk_custom_setting *const_setting) {
                 set_array_memory_size_locked(setting, array_state->default_size);
             }
         } else {
-            /* Single active-element reset, as invoked once per element by
-             * apply_scope. */
+            /* A directly requested single-element reset. */
             ret = reset_array_element_locked(setting);
             if (ret == 0) {
                 char size_name[SETTINGS_MAX_NAME_LEN];
@@ -1582,15 +1579,9 @@ int zmk_custom_setting_rollback_temporary(const struct zmk_custom_setting *const
     return 0;
 }
 
-/* Apply callback to one setting, expanding an array descriptor into one
- * callback invocation per currently-active element (via the index-view
- * mechanism) instead of a single call on the descriptor. Each element
- * contributes its own count to *affected_count - e.g.
- * zmk_custom_settings_reset_scope("test", "array_value", NULL,
- * &affected_count) reports exactly 3 for a 3-element active array, not 1 for
- * "one array descriptor". Internally this means save/discard/reset each run
- * their whole-array bookkeeping update redundantly once per element, which is
- * harmless and still O(active count), not O(full registry). */
+/* Structural scope operations must visit the array itself, even when empty.
+ * Preserve the active-element count for nonempty arrays; an empty array counts
+ * as one structural target. The descriptor also survives concurrent view churn. */
 static int apply_scope_to_setting(const struct zmk_custom_setting *setting,
                                   int (*callback)(const struct zmk_custom_setting *),
                                   uint32_t *count, int *first_error) {
@@ -1600,21 +1591,11 @@ static int apply_scope_to_setting(const struct zmk_custom_setting *setting,
         uint32_t active_size = setting->array_state->size;
         custom_settings_memory_unlock();
 
-        for (uint32_t index = 0; index < active_size; index++) {
-            const struct zmk_custom_setting *view = zmk_custom_setting_find_array_element(
-                setting->custom_subsystem_id, setting->array_key, index);
-            if (!view) {
-                continue;
-            }
-
-            int ret = callback(view);
-            if (ret < 0 && *first_error == 0) {
-                *first_error = ret;
-                continue;
-            }
-            if (ret == 0) {
-                (*count)++;
-            }
+        int ret = callback(setting);
+        if (ret < 0 && *first_error == 0) {
+            *first_error = ret;
+        } else if (ret == 0) {
+            *count += MAX(active_size, 1U);
         }
         return 0;
     }
@@ -2213,9 +2194,8 @@ static int custom_settings_handle_set(const char *name, size_t len, settings_rea
     char array_key[CONFIG_ZMK_CUSTOM_SETTINGS_KEY_MAX_LEN];
     if (IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY) &&
         split_array_size_key(next, array_key, sizeof(array_key))) {
-        struct zmk_custom_setting *setting =
-            (struct zmk_custom_setting *)zmk_custom_setting_find_array_element(custom_subsystem_id,
-                                                                               array_key, 0);
+        const struct zmk_custom_setting *setting =
+            zmk_custom_setting_find_array(custom_subsystem_id, array_key);
         if (!setting) {
             return -ENOENT;
         }

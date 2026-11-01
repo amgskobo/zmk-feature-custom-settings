@@ -28,6 +28,12 @@
   },
   "regression_fixtures": [
     {
+      "fixture": "scope_permission_cases.inc and mutation-load-size/empty-*/short-* boundary cases",
+      "contract": "Secure keyspace namespaces require unlock for scoped mutations even when empty; array size loads retain immutable identity; scope operations include empty arrays and reset removes inactive persisted slots.",
+      "negative_control": "Original-source runs fail the permission, load-size and empty-array checks; independent scalar permissions and unchanged load-view/mutation controls pass.",
+      "limits": "Real kernel/settings and native RPC codec/dispatch, controlled backend; no physical transport, storage retention or power-loss claim."
+    },
+    {
       "fixture": "tests/support/custom_settings_handler_assertions_2.inc: custom_settings_quiet_operations (inside checked public_suppress init)",
       "contract": "Quiet scalar, small/large raw, typed/raw keyspace and save retain exact registry values and synchronous core events; real Studio queue submissions are zero for quiet and exactly one for ordinary; independent nested writer still notifies; existing observed suppression snapshot count preserved.",
       "negative_control": "tests/quiet_notify_negative_control.py removes only the Studio quiet-event guard in a separate owner copy; unchanged owner native fixture must fail.",
@@ -86,6 +92,24 @@
       "contract": "Retain array-element view identity and temporary state through synchronous out-of-lock event dispatch; format persistence names without recycling the caller view; fail a new-view push before mutation when the bounded pool is fully retained, then recover after release.",
       "negative_control": "The unchanged real-kernel unlock handoff redirects the original notification to a different array three times, with a passing serial control. An isolated retain-guard fault must reproduce the event-identity failure. tests/notification_view_negative_control.py removes only the pool recycling guard in an isolated source copy.",
       "limits": "Seven controlled kernel/backend scenarios and exact event/value checks; no physical transport, retention, timing or indefinite borrowed-handle guarantee."
+    },
+    {
+      "fixture": "tests/support/relay_security_cases.inc; tests/split_central",
+      "contract": "Locked, stale queued and lock-unlock-retired peripheral notifications and delayed lists cannot reach local Studio; unchanged unlocked sessions still deliver.",
+      "negative_control": "Original handler with the unchanged security fixture fails its checked init; repeat the same binary three times from fresh state.",
+      "limits": "Actual lock API, events, kernel work and nanopb relay codec; controlled notification dispatch, not physical transport cancellation."
+    },
+    {
+      "fixture": "tests/support/async_notification_cases.inc",
+      "contract": "Queue copied subsystem/key/array index, resolve and retain only while encoding; a deliberate full retained-view churn proves the borrowed target was reused before draining the queue.",
+      "negative_control": "Restoring a borrowed queue pointer must fail the same deferred-identity case; serial delivery remains a control.",
+      "limits": "Native view-pool reuse and actual notification worker; no indefinite borrowed-handle or transport-delivery guarantee."
+    },
+    {
+      "fixture": "tests/web/RPCTestSection.spec.tsx",
+      "contract": "JSON export/import retains each split source independently; large local BYTES and UTF-8 STRING imports use ordered chunks with one final commit.",
+      "negative_control": "Original exporter/import path fails source count, prototype-key and large-import assertions.",
+      "limits": "Controlled DOM/RPC boundary; split chunk writes remain unsupported."
     }
   ]
 }

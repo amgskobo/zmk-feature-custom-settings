@@ -24,8 +24,14 @@ static void mutation_churn_views(struct k_work *work) {
 }
 K_WORK_DEFINE(mutation_churn_work, mutation_churn_views);
 static void mutation_load_read_hook(const struct extra_record *record) {
-    if (!operation || strcmp(operation, "mutation-load-view") ||
-        strcmp(record->name, "custom_settings/mutations/array/0")) {
+    if (!operation ||
+        (strcmp(operation, "mutation-load-view") && strcmp(operation, "mutation-load-size"))) {
+        return;
+    }
+    const char *target = !strcmp(operation, "mutation-load-size")
+                             ? "custom_settings/mutations/array/_size"
+                             : "custom_settings/mutations/array/0";
+    if (strcmp(record->name, target)) {
         return;
     }
     CHECK(k_work_submit(&mutation_churn_work) > 0);
@@ -238,7 +244,7 @@ static void mutation_cases(const char *name) {
             mutation_payload("item/one", 1);
             CHECK(zmk_custom_setting_keyspace_find(&keys, "item/temp") == NULL);
         }
-    } else if (!strcmp(name, "load-view")) {
+    } else if (!strcmp(name, "load-view") || !strcmp(name, "load-size")) {
         uint32_t size = 1;
         int32_t stored = 77;
         strcpy(extra[0].name, "custom_settings/mutations/array/_size");
@@ -255,6 +261,45 @@ static void mutation_cases(const char *name) {
         for (uint32_t i = 0; i < 20; i++) {
             CHECK(mutation_churn_array.array_state->values[i].int32_value == 0);
         }
+    } else if (!strcmp(name, "empty-save") || !strcmp(name, "empty-discard") ||
+               !strcmp(name, "empty-reset") || !strcmp(name, "short-reset") ||
+               !strcmp(name, "short-discard")) {
+        mutation_push(111, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+        mutation_push(222, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
+        CHECK(zmk_custom_setting_array_pop_back(&mutation_array, NULL,
+                                                ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY) == 0);
+        bool empty = !strncmp(name, "empty-", 6);
+        if (empty) {
+            CHECK(zmk_custom_setting_array_pop_back(&mutation_array, NULL,
+                                                    ZMK_CUSTOM_SETTING_WRITE_MODE_MEMORY) == 0);
+        }
+        uint32_t count = 0;
+        bool discard = strstr(name, "discard") != NULL;
+        bool save = !strcmp(name, "empty-save");
+        int ret = save      ? zmk_custom_settings_save_scope("mutations", "array", NULL, &count)
+                  : discard ? zmk_custom_settings_discard_scope("mutations", "array", NULL, &count)
+                            : zmk_custom_settings_reset_scope("mutations", "array", NULL, &count);
+        CHECK(ret == 0 && count == 1);
+        CHECK(zmk_custom_setting_array_size(&mutation_array) == (discard ? 2 : 0));
+        if (discard) {
+            CHECK(mutation_at(0) == 111 && mutation_at(1) == 222);
+        }
+        CHECK(!zmk_custom_setting_has_unsaved_value(&mutation_array));
+        CHECK(settings_load_subtree("custom_settings") == 0);
+        CHECK(zmk_custom_setting_array_size(&mutation_array) == (discard ? 2 : 0));
+        if (!save && !discard) {
+            for (uint32_t i = 0; i < mutation_array.array_state->max_size; i++) {
+                CHECK(!mutation_array.array_state->has_persistent[i]);
+                CHECK(mutation_array.array_state->values[i].int32_value == 0);
+            }
+            for (unsigned i = 0; i < ARRAY_SIZE(extra); i++) {
+                CHECK(!extra[i].present ||
+                      strncmp(extra[i].name, "custom_settings/mutations/array/",
+                              sizeof("custom_settings/mutations/array/") - 1));
+            }
+        }
+        CHECK(value(first) == 20 && value(second) == 21);
+        CHECK(zmk_custom_setting_array_size(&mutation_churn_array) == 0);
     } else if (!strcmp(name, "shift")) {
         mutation_push(10, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);
         mutation_push(20, ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST);

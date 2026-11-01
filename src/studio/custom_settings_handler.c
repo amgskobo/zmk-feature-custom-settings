@@ -15,6 +15,7 @@
 #include <pb_encode.h>
 #include <zephyr/init.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 #include <cormoran/zmk/custom_settings.h>
 #include "../custom_settings_internal.h"
@@ -24,6 +25,7 @@
 #if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC) && IS_ENABLED(CONFIG_ZMK_STUDIO_RPC)
 #include <zmk/studio/core.h>
 #include <zmk/studio/custom.h>
+#include <zmk/events/endpoint_changed.h>
 #define ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC 1
 #else
 #define ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC 0
@@ -69,6 +71,29 @@ static bool studio_is_unlocked(void) {
     return true;
 #endif
 }
+
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_SPLIT_RPC_RELAY) &&                                      \
+    IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL)
+/* Peripherals have no Studio lock. Retire deferred relay work when the local
+ * authorization or endpoint changes, including a lock followed by an unlock. */
+static atomic_t relay_session_epoch;
+
+static bool relay_session_is_current(atomic_val_t epoch) {
+    return studio_is_unlocked() && atomic_get(&relay_session_epoch) == epoch;
+}
+
+#if ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
+static int relay_session_changed_listener(const zmk_event_t *eh) {
+    ARG_UNUSED(eh);
+    atomic_inc(&relay_session_epoch);
+    return ZMK_EV_EVENT_BUBBLE;
+}
+
+ZMK_LISTENER(custom_settings_relay_session, relay_session_changed_listener);
+ZMK_SUBSCRIPTION(custom_settings_relay_session, zmk_studio_core_lock_state_changed);
+ZMK_SUBSCRIPTION(custom_settings_relay_session, zmk_endpoint_changed);
+#endif
+#endif
 
 static bool needs_unlock(enum zmk_custom_setting_permission permission) {
     return permission == ZMK_CUSTOM_SETTING_PERMISSION_SECURE && !studio_is_unlocked();
@@ -1127,16 +1152,36 @@ static int relayed_notification_to_public(const struct zmk_custom_settings_relay
     return 0;
 }
 
+struct relay_notification_payload {
+    const cormoran_zmk_custom_settings_Notification *notification;
+    atomic_val_t epoch;
+};
+
+static bool encode_current_relay_notification(pb_ostream_t *stream, const pb_field_t *field,
+                                              void *const *arg) {
+    const struct relay_notification_payload *payload = *arg;
+    if (!relay_session_is_current(payload->epoch)) {
+        return false;
+    }
+    void *notification = (void *)payload->notification;
+    return encode_notification_payload(stream, field, &notification);
+}
+
 static int
-raise_encoded_studio_notification(const cormoran_zmk_custom_settings_Notification *notification) {
+raise_encoded_studio_notification(const cormoran_zmk_custom_settings_Notification *notification,
+                                  atomic_val_t epoch) {
+    if (!relay_session_is_current(epoch)) {
+        return -EACCES;
+    }
     int index = custom_subsystem_index();
     if (index < 0) {
         return index;
     }
 
+    struct relay_notification_payload gated = {.notification = notification, .epoch = epoch};
     pb_callback_t payload = {
-        .funcs.encode = encode_notification_payload,
-        .arg = (void *)notification,
+        .funcs.encode = encode_current_relay_notification,
+        .arg = &gated,
     };
 
     return raise_zmk_studio_custom_notification((struct zmk_studio_custom_notification){
@@ -2296,6 +2341,32 @@ static bool scope_has_permission(const struct zmk_custom_settings_setting_scope 
         }
     }
 
+    if (IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE)) {
+        /* Authorize the namespace, including presently empty slots. Checking
+         * only live entries would race a create before the scope mutation. */
+        const char *subsystem = setting_scope_custom_subsystem_id(scope);
+        const char *key = setting_scope_key(scope);
+        const char *prefix = setting_scope_key_prefix(scope);
+        ZMK_CUSTOM_SETTING_KEYSPACE_FOREACH(keyspace) {
+            if ((read_permission ? keyspace->read_permission : keyspace->write_permission) !=
+                permission) {
+                continue;
+            }
+            if (subsystem && subsystem[0] && strcmp(subsystem, keyspace->custom_subsystem_id)) {
+                continue;
+            }
+            size_t namespace_len = strlen(keyspace->key_prefix);
+            if (key && key[0] && strncmp(key, keyspace->key_prefix, namespace_len)) {
+                continue;
+            }
+            if (prefix && prefix[0] &&
+                strncmp(prefix, keyspace->key_prefix, MIN(strlen(prefix), namespace_len))) {
+                continue;
+            }
+            return true;
+        }
+    }
+
     return false;
 }
 
@@ -2627,6 +2698,7 @@ static int request_to_relay_request(const cormoran_zmk_custom_settings_Request *
 }
 
 static int relay_request_to_peripherals(const cormoran_zmk_custom_settings_Request *req) {
+    atomic_val_t epoch = atomic_get(&relay_session_epoch);
     struct zmk_custom_settings_relay_request relay_request;
 
     int ret = request_to_relay_request(req, &relay_request);
@@ -2634,7 +2706,8 @@ static int relay_request_to_peripherals(const cormoran_zmk_custom_settings_Reque
         return ret;
     }
 
-    return raise_zmk_custom_settings_relay_request(relay_request);
+    return relay_session_is_current(epoch) ? raise_zmk_custom_settings_relay_request(relay_request)
+                                           : -EACCES;
 }
 
 static void list_settings_relay_work_handler(struct k_work *work);
@@ -2643,6 +2716,7 @@ K_WORK_DELAYABLE_DEFINE(list_settings_relay_work, list_settings_relay_work_handl
 static K_MUTEX_DEFINE(list_settings_relay_lock);
 static struct zmk_custom_settings_relay_request list_settings_relay_request;
 static bool list_settings_relay_active;
+static atomic_val_t list_settings_relay_epoch;
 
 static void list_settings_relay_work_handler(struct k_work *work) {
     ARG_UNUSED(work);
@@ -2653,8 +2727,13 @@ static void list_settings_relay_work_handler(struct k_work *work) {
         return;
     }
     struct zmk_custom_settings_relay_request relay_request = list_settings_relay_request;
+    atomic_val_t epoch = list_settings_relay_epoch;
     list_settings_relay_active = false;
     k_mutex_unlock(&list_settings_relay_lock);
+
+    if (!relay_session_is_current(epoch)) {
+        return;
+    }
 
     LOG_DBG("Custom settings relaying list request to peripherals");
     int ret = raise_zmk_custom_settings_relay_request(relay_request);
@@ -2665,6 +2744,7 @@ static void list_settings_relay_work_handler(struct k_work *work) {
 
 static int
 schedule_list_settings_relay_to_peripherals(const cormoran_zmk_custom_settings_Request *req) {
+    atomic_val_t epoch = atomic_get(&relay_session_epoch);
     struct zmk_custom_settings_relay_request relay_request;
 
     int ret = request_to_relay_request(req, &relay_request);
@@ -2675,6 +2755,7 @@ schedule_list_settings_relay_to_peripherals(const cormoran_zmk_custom_settings_R
     k_work_cancel_delayable(&list_settings_relay_work);
     k_mutex_lock(&list_settings_relay_lock, K_FOREVER);
     list_settings_relay_request = relay_request;
+    list_settings_relay_epoch = epoch;
     list_settings_relay_active = true;
     k_mutex_unlock(&list_settings_relay_lock);
 
@@ -2925,7 +3006,7 @@ static void relay_request_work_handler(struct k_work *work) {
 #endif
 
 struct zmk_custom_settings_notification_request {
-    const struct zmk_custom_setting *setting;
+    struct zmk_custom_settings_setting_ref ref;
     cormoran_zmk_custom_settings_SettingNotificationKind kind;
     uint32_t source;
 };
@@ -2941,9 +3022,24 @@ static void notification_work_handler(struct k_work *work) {
 
     struct zmk_custom_settings_notification_request request;
     while (k_msgq_get(&notification_msgq, &request, K_NO_WAIT) == 0) {
-        int ret = raise_setting_notification(request.setting, request.kind,
-                                             can_include_value(request.setting), false, false,
-                                             request.source);
+        /* Resolve the copied identity only when consumed. Array handles are
+         * borrowed, so retain this resolved view through synchronous encoding. */
+        custom_settings_memory_lock();
+        const struct zmk_custom_setting *setting = setting_for_ref(&request.ref);
+        if (setting) {
+            retain_setting_notification_locked(setting);
+        }
+        custom_settings_memory_unlock();
+        if (!setting) {
+            continue;
+        }
+        int ret = raise_setting_notification(setting, request.kind, can_include_value(setting),
+                                             false, false, request.source);
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
+        custom_settings_memory_lock();
+        array_view_release_locked(setting);
+        custom_settings_memory_unlock();
+#endif
         if (ret < 0) {
             LOG_WRN("Failed to raise custom settings notification: %d", ret);
         }
@@ -2976,10 +3072,20 @@ static int setting_changed_listener(const zmk_event_t *eh) {
 #endif
 
     struct zmk_custom_settings_notification_request request = {
-        .setting = ev->setting,
         .kind = proto_notification_kind(ev->kind),
         .source = ev->source,
     };
+    custom_settings_memory_lock();
+    request.ref.has_custom_subsystem_id = true;
+    copy_string(request.ref.custom_subsystem_id, sizeof(request.ref.custom_subsystem_id),
+                ev->setting->custom_subsystem_id);
+    request.ref.has_key = true;
+    copy_string(request.ref.key, sizeof(request.ref.key),
+                zmk_custom_setting_public_key(ev->setting));
+    request.ref.has_array_index = zmk_custom_setting_is_array(ev->setting) &&
+                                  ev->setting->array_index != ZMK_CUSTOM_SETTING_ARRAY_NONE;
+    request.ref.array_index = ev->setting->array_index;
+    custom_settings_memory_unlock();
     int ret = k_msgq_put(&notification_msgq, &request, K_NO_WAIT);
     if (ret < 0) {
         LOG_WRN("Failed to queue custom settings notification: %d", ret);
@@ -3140,6 +3246,7 @@ ZMK_RPC_SUBSYSTEM_SETTINGS_RESET(custom_settings, custom_settings_reset);
 
 #if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_TEST) && ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
 #include "../../tests/support/custom_settings_handler_assertions_2.inc"
+#include "../../tests/support/async_notification_cases.inc"
 #endif
 
 #if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_SPLIT_RPC_RELAY)
@@ -3169,26 +3276,38 @@ static int relay_request_listener(const zmk_event_t *eh) {
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) && ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
 static void relay_notification_work_handler(struct k_work *work);
 
-K_MSGQ_DEFINE(relay_notification_msgq, sizeof(struct zmk_custom_settings_relay_notification),
+struct queued_relay_notification {
+    atomic_val_t epoch;
+    struct zmk_custom_settings_relay_notification event;
+};
+
+K_MSGQ_DEFINE(relay_notification_msgq, sizeof(struct queued_relay_notification),
               CONFIG_ZMK_CUSTOM_SETTINGS_RELAY_NOTIFICATION_QUEUE_SIZE, 4);
 K_WORK_DEFINE(relay_notification_work, relay_notification_work_handler);
 
 static void relay_notification_work_handler(struct k_work *work) {
     ARG_UNUSED(work);
 
-    struct zmk_custom_settings_relay_notification ev;
-    while (k_msgq_get(&relay_notification_msgq, &ev, K_NO_WAIT) == 0) {
+    struct queued_relay_notification queued;
+    while (k_msgq_get(&relay_notification_msgq, &queued, K_NO_WAIT) == 0) {
+        if (!relay_session_is_current(queued.epoch)) {
+            continue;
+        }
         k_mutex_lock(&notification_buffer_lock, K_FOREVER);
         notification_buffer = (cormoran_zmk_custom_settings_Notification)
             cormoran_zmk_custom_settings_Notification_init_zero;
-        int ret = relayed_notification_to_public(&ev, &notification_buffer);
+        int ret = relayed_notification_to_public(&queued.event, &notification_buffer);
         if (ret < 0) {
             LOG_WRN("Failed to convert relayed custom settings notification: %d", ret);
             k_mutex_unlock(&notification_buffer_lock);
             continue;
         }
 
-        ret = raise_encoded_studio_notification(&notification_buffer);
+        if (!relay_session_is_current(queued.epoch)) {
+            k_mutex_unlock(&notification_buffer_lock);
+            continue;
+        }
+        ret = raise_encoded_studio_notification(&notification_buffer, queued.epoch);
         if (ret < 0) {
             LOG_WRN("Failed to raise relayed custom settings notification: %d", ret);
         }
@@ -3202,11 +3321,13 @@ static int relay_notification_listener(const zmk_event_t *eh) {
     if (!ev) {
         return ZMK_EV_EVENT_BUBBLE;
     }
-    if (ev->source == ZMK_RELAY_EVENT_SOURCE_SELF) {
+    atomic_val_t epoch = atomic_get(&relay_session_epoch);
+    if (ev->source == ZMK_RELAY_EVENT_SOURCE_SELF || !relay_session_is_current(epoch)) {
         return ZMK_EV_EVENT_BUBBLE;
     }
 
-    int ret = k_msgq_put(&relay_notification_msgq, ev, K_NO_WAIT);
+    struct queued_relay_notification queued = {.epoch = epoch, .event = *ev};
+    int ret = k_msgq_put(&relay_notification_msgq, &queued, K_NO_WAIT);
     if (ret < 0) {
         LOG_WRN("Failed to queue relayed custom settings notification: %d", ret);
         return ZMK_EV_EVENT_BUBBLE;
@@ -3226,6 +3347,9 @@ ZMK_SUBSCRIPTION(custom_settings_relay_request, zmk_custom_settings_relay_reques
 #if IS_ENABLED(CONFIG_ZMK_SPLIT_ROLE_CENTRAL) && ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
 ZMK_LISTENER(custom_settings_relay_notification, relay_notification_listener);
 ZMK_SUBSCRIPTION(custom_settings_relay_notification, zmk_custom_settings_relay_notification);
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_TEST)
+#include "../../tests/support/relay_security_cases.inc"
+#endif
 #endif
 #endif
 

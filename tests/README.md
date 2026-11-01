@@ -37,6 +37,11 @@ and installed dependencies remain in `web/`. The package scripts only dispatch
 the owner configuration. No dependencies are installed implicitly by the tests.
 
 Guarded production includes in `tests/support/` contain test-only scenarios.
+`split_central` also exercises the real relay codec, lock transitions and queued
+list/notification retirement. The unchanged unlocked session remains a positive
+forwarding control. `async_notification_cases.inc` checks deferred array identity
+after genuine view-pool eviction, with a serial control. These are native
+event/encoding checks, not physical split or Studio delivery acceptance.
 Small production probes remain beside the state they expose. Public sample
 settings and diagnostic/fault-injection APIs are production contracts, not
 duplicated test algorithms.
@@ -94,7 +99,7 @@ checks stored keyspace ordinal parsing through the production settings load
 handler. Decimal names must fit uint32 and the keyspace capacity before their
 payload is read. Invalid initial and later records cannot create a wrapped
 slot or alter valid entries and independent scalar settings; leading zeros
-remain accepted for valid slot numbers. The features binary runs forty-three
+remain accepted for valid slot numbers. The features binary runs forty-nine
 scenarios, with the same binary repeated three times in fresh processes.
 `ordinal_overflow_negative_control.py` restores only unchecked accumulation
 in an isolated source copy; the unchanged real-loader assertion must fail.
@@ -179,7 +184,7 @@ contract proposed by upstream PR #58 without replacing any original assertion.
 unlock-to-dispatch view churn, nested listener churn, temporary values, temporary
 rollback, persistence beyond the view-pool size, and full retained-pool refusal
 with recovery. The race fails three times before retention while the serial
-control passes. The final features binary runs forty-three scenarios, three
+control passes. The final features binary runs forty-nine scenarios, three
 times each. The controlled backend has room for the long-array records; its
 failure injection, prior cases and assertions remain intact. The fixture also
 verifies lock-free listeners, exact values/identities, independent settings and
@@ -191,3 +196,36 @@ the unchanged settings boundary entry with `CUSTOM_SETTINGS_SOURCE_DIR` selectin
 that copy and fresh evidence. The event-identity and retained-pool assertions
 must fail; the serial control and earlier boundary scenarios must still pass.
 The operator refuses to modify its owning checkout.
+
+`mutation-load-size` extends the real-backend handoff to the array length
+record. Empty and shortened scope save/discard/reset cases assert exact values,
+length, affected counts, dirty flags, independent state and reload behavior.
+Whole-array reset must remove inactive records too. All six added boundary
+cases run three times in the features binary; the prior scenarios remain.
+
+`scope_permission_cases.inc` runs within the existing checked request-decode
+hook. Actual encode/decode/dispatch of save/discard/reset must refuse locked
+secure keyspace targets by public key, storage ordinal and intersecting prefix.
+It also checks the protected empty namespace and unrelated/unlocked controls,
+restores Studio lock state and removes its synthetic entry. This exercises the
+real Studio lock API and registry/backend; physical transport remains separate.
+
+
+## Deferred Studio notification regressions
+
+`support/async_notification_cases.inc` raises a real array-element change, then
+retains enough synthetic views to force the borrowed target address to be
+reused. It checks that reuse happened before releasing the pool and draining
+the actual notification worker. The resulting key/index stays original; serial
+delivery remains a positive control. Restoring a borrowed pointer in the queue
+must fail this case. The checked init is required in Studio and split central.
+
+`support/relay_security_cases.inc` uses actual lock events, work handlers and
+nanopb payloads. Locked receive, queued-then-locked and queued-then-lock/unlock
+notifications are dropped. Delayed lists retire with that session too; an
+unchanged unlocked session still forwards. This checks dispatch authorization,
+not cancellation of bytes already sent over physical transport.
+
+The Web RPC fixture checks independent split sources for scalar/array JSON,
+prototype-named public keys, and large local BYTES/UTF-8 STRING imports. Only
+local large values use the chunk path; split chunk writes remain unsupported.

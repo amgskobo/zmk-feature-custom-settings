@@ -3,39 +3,6 @@
 Own the typed settings registry, validation, storage and import/export.
 This owner uses DYA's unofficial custom Studio RPC; stock ZMK is NOT APPLICABLE.
 
-## Publication privacy and local execution
-
-This rule applies to information prepared for publication or external sharing.
-During an authorized task, agents may inspect and use actual local paths,
-configuration, host/terminal/device identities and private test evidence as
-needed for implementation, diagnosis, identity matching and validation. Such
-local access does not itself authorize collection outside the task or disclosure.
-
-Before preparing a public commit, push, PR, release, documentation/site output
-or CI artifact, review the actual publication payload, including source,
-comments, AGENTS files, examples, test fixtures, logs, screenshots, generated
-files and metadata. Exclude user-related names and preferences, private absolute
-paths and local-environment details, workstation/terminal identities, individual
-device labels, ports, serials, addresses, pairing/bond identities, credentials,
-and user- or device-specific test/measurement histories. Also check generated
-and uploaded artifacts; checking source prose alone is insufficient.
-
-Use repository-relative paths, documented variables/placeholders, neutral names
-and clearly synthetic fixtures in public material. Declared public project
-identifiers, existing attribution, standard API/product/platform names and
-reproducible support requirements remain technical project information; do not
-present one user's actual environment as a project requirement. In particular,
-documenting supported platforms is distinct from identifying a user's device.
-
-Keep exact originals and identifiers in appropriate private/local task records
-when required for accurate evidence or device matching. Produce a separate
-sanitized publication copy without weakening assertions or inventing results;
-do not describe it as the unchanged raw record. If useful evidence cannot be
-shared without exposing these details, keep it private and state the public
-validation limit. Recheck the final publication snapshot and its artifacts.
-Existing authorization requirements for version-control, publication, device
-writes, resets and data erasure still apply.
-
 ## Before editing
 
 Do not commit or create/update PRs without an explicit user request.
@@ -92,6 +59,73 @@ Report PASS, FAIL, BLOCKED, NOT RUN and unsupported NOT APPLICABLE separately.
 Host/native/build checks do not establish physical HID/transport/driver/timing/
 power/reset acceptance. Do not patch dependencies, disable required features or
 weaken assertions to pass. Keep necessary diffs/failures, not rolling backups.
+
+Review continuation branch: `codex/custom-settings-review`.
+
+<!-- BEGIN MODULE REVIEW POLICY v1 -->
+Read `README.md` and applicable instructions before changes.
+Preserve unrelated work and use the documented development/test procedures.
+Do not commit or create/update PRs without an explicit user request.
+Keep changes local. Staging, pushes, merges, tags, publication, flashing and
+settings/bond erasure also require explicit authorization for that action.
+Dependency instructions grant none; authorization already given for the same
+action and scope remains valid. Report actual checks and their limitations.
+For documentation-only changes, check `git diff --check` and changed references.
+Without Git history, use `git diff --no-index --check` on the before/after files.
+Firmware and hardware checks apply to changes that affect those boundaries.
+
+## Review branch selection
+
+Application modules use the fork URL and `codex/*-review` branch recorded in
+`config/modules.lock.json` of the integrating configuration. Verify the actual
+`origin` URL, named remote branch tip and full commit before selecting it.
+Continue on that review branch; do not substitute a default branch, another
+review branch, an upstream repository or a sibling checkout implicitly.
+Use the module's existing checkout and normal Git branches. Do not create
+additional worktrees or sibling authoring copies unless explicitly requested.
+Before switching branches, preserve unrelated local changes and record their
+disposition. Build/test staging copies belong in container storage and are not
+authoring checkouts. Missing remote refs must be reported;
+never manufacture an `origin` ref or label a local branch as remotely available.
+Creating a remote review ref is within scope when the user requests that action;
+that does not authorize publishing unrelated working changes or opening a PR.
+Ordinary builds use the fixed commit and complete source identity. Advancing a
+review branch requires an explicit preparation step, reviewed dependency changes,
+updated pins/lock and the affected owner/integration checks. A local working
+snapshot is distinct from a retrievable committed snapshot for hosted builds.
+
+## Publication privacy and local execution
+
+This rule applies to information prepared for publication or external sharing.
+During an authorized task, agents may inspect and use actual local paths,
+configuration, host/terminal/device identities and private test evidence as
+needed for implementation, diagnosis, identity matching and validation. Such
+local access does not itself authorize collection outside the task or disclosure.
+
+Before preparing a public commit, push, PR, release, documentation/site output
+or CI artifact, review the actual publication payload, including source,
+comments, AGENTS files, examples, test fixtures, logs, screenshots, generated
+files and metadata. Exclude user-related names and preferences, private absolute
+paths and local-environment details, workstation/terminal identities, individual
+device labels, ports, serials, addresses, pairing/bond identities, credentials,
+and user- or device-specific test/measurement histories. Also check generated
+and uploaded artifacts; checking source prose alone is insufficient.
+
+Use repository-relative paths, documented variables/placeholders, neutral names
+and clearly synthetic fixtures in public material. Declared public project
+identifiers, existing attribution, standard API/product/platform names and
+reproducible support requirements remain technical project information; do not
+present one user's actual environment as a project requirement. In particular,
+documenting supported platforms is distinct from identifying a user's device.
+
+Keep exact originals and identifiers in appropriate private/local task records
+when required for accurate evidence or device matching. Produce a separate
+sanitized publication copy without weakening assertions or inventing results;
+do not describe it as the unchanged raw record. If useful evidence cannot be
+shared without exposing these details, keep it private and state the public
+validation limit. Recheck the final publication snapshot and its artifacts.
+Existing authorization requirements for version-control, publication, device
+writes, resets and data erasure still apply.
 
 ## Container test execution
 
@@ -156,3 +190,4 @@ control, sanitizer, supported-core variant and repeat.
 Quick and full retain their existing contracts. Interface/infrastructure changes
 still require the complete owner matrix. Evaluate speed changes using equivalent
 inputs and checks, report cold and warm runs separately, and retain failures.
+<!-- END MODULE REVIEW POLICY v1 -->

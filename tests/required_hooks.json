@@ -1,150 +1,187 @@
 [
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST"
-                    ],
-        "fixtures":  [
-                         "test",
-                         "studio",
-                         "split_peripheral"
-                     ],
-        "hook":  "custom_settings_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST"
+        ],
+        "fixtures": [
+            "test",
+            "studio",
+            "split_peripheral",
+            "split_central"
+        ],
+        "hook": "custom_settings_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_rpc_bytes_converter_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_rpc_bytes_converter_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_default_value_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_default_value_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_list_array_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_list_array_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_list_keyspace_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_list_keyspace_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_request_decode_regression_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_request_decode_regression_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_notification_reencode_regression_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_notification_reencode_regression_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_rpc_suppresses_notification_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_rpc_suppresses_notification_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_public_suppress_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_public_suppress_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_reset_all_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_reset_all_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_CHUNKED_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_chunked_rpc_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_CHUNKED_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_chunked_rpc_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_CHUNKED_RPC"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_large_chunked_rpc_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_CHUNKED_RPC"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_large_chunked_rpc_test_init"
     },
     {
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE"
-                    ],
-        "fixtures":  [
-                         "studio"
-                     ],
-        "hook":  "custom_settings_reset_keyspace_test_init"
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_reset_keyspace_test_init"
     },
     {
-        "not_configs":  [
-                            "CONFIG_ZMK_SPLIT_ROLE_CENTRAL"
-                        ],
-        "configs":  [
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
-                        "CONFIG_ZMK_CUSTOM_SETTINGS_SPLIT_RPC_RELAY",
-                        "CONFIG_ZMK_SPLIT"
-                    ],
-        "fixtures":  [
-                         "split_peripheral"
-                     ],
-        "hook":  "custom_settings_split_peripheral_relay_test_init"
+        "not_configs": [
+            "CONFIG_ZMK_SPLIT_ROLE_CENTRAL"
+        ],
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_SPLIT_RPC_RELAY",
+            "CONFIG_ZMK_SPLIT"
+        ],
+        "fixtures": [
+            "split_peripheral"
+        ],
+        "hook": "custom_settings_split_peripheral_relay_test_init"
+    },
+    {
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_SPLIT_RPC_RELAY",
+            "CONFIG_ZMK_SPLIT_ROLE_CENTRAL"
+        ],
+        "fixtures": [
+            "split_central"
+        ],
+        "hook": "custom_settings_relay_security_test_init"
+    },
+    {
+        "configs": [
+            "CONFIG_ZMK_CUSTOM_SETTINGS_TEST",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_STUDIO_RPC",
+            "CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY"
+        ],
+        "fixtures": [
+            "studio",
+            "split_central"
+        ],
+        "hook": "custom_settings_async_notification_test_init"
     }
 ]

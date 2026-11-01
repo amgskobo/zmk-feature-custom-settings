@@ -21,7 +21,18 @@ does not prevent Zephyr from loading unrelated workspace modules and their
 application Kconfig files into this standalone kernel fixture.
 
 Each scenario runs in a fresh process three times. The core variant has ten
-scenarios; the features variant has those ten plus ten data-feature cases:
+scenarios; the features variant has forty-nine scenarios, retaining the existing
+data, mutation and notification checks and adding these structural cases:
+
+- `mutation-load-size`: churn the bounded view pool during the backend read of
+  an array length; the immutable target and independent array must stay exact.
+- `mutation-empty-save`, `mutation-empty-discard`, `mutation-empty-reset`:
+  operate on a memory-empty array with persisted elements, then reload through
+  the real backend. Success must apply to structure, not silently skip it.
+- `mutation-short-reset`, `mutation-short-discard`: a shortened nonempty array
+  must reset all stored slots or restore all persisted elements, respectively.
+
+The earlier scenarios remain unchanged:
 
 - `control`: serialized save/discard/reset, same-thread recursive reload and
   independent state.

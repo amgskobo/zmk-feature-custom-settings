@@ -11,6 +11,7 @@
  * pre-fix code passes every other native test but fails here.
  */
 #include "rpc_write_mode_cases.inc"
+#include "scope_permission_cases.inc"
 
 static int custom_settings_request_decode_regression_test_init(void) {
     static uint8_t enc_buf[64];
@@ -102,6 +103,10 @@ static int custom_settings_request_decode_regression_test_init(void) {
     int invalid_mode_result = custom_settings_invalid_write_modes();
     if (invalid_mode_result) {
         return invalid_mode_result;
+    }
+    int permission_result = custom_settings_scope_permission_cases();
+    if (permission_result) {
+        return permission_result;
     }
 
     LOG_INF("PASS: custom_settings_request_decode_regression write=%s create=%u bytes", payload,

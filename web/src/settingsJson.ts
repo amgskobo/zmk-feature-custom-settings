@@ -30,13 +30,25 @@ export interface SettingsExportDocument {
   format: typeof SETTINGS_EXPORT_FORMAT;
   version: typeof SETTINGS_EXPORT_VERSION;
   exportedAt: string;
-  customSubsystems: Record<string, Record<string, ExportedSettingEntry>>;
+  customSubsystems: Record<
+    string,
+    Record<string, ExportedSettingEntry | ExportedSettingEntry[]>
+  >;
 }
 
 export function countExportedSettings(doc: SettingsExportDocument): number {
   return Object.values(doc.customSubsystems).reduce(
     (sum, settings) =>
-      sum + Object.values(settings).reduce((s, e) => s + (e.size ?? 1), 0),
+      sum +
+      Object.values(settings).reduce(
+        (s, value) =>
+          s +
+          (Array.isArray(value) ? value : [value]).reduce(
+            (count, entry) => count + (entry.size ?? 1),
+            0
+          ),
+        0
+      ),
     0
   );
 }
@@ -98,42 +110,58 @@ export function createSettingsExportDocument(
     if (exported) allExported.push(exported);
   }
 
-  const bySubsystem: Record<string, Record<string, ExportedSetting[]>> = {};
+  const bySubsystem = new Map<
+    string,
+    Map<string, Map<number, ExportedSetting[]>>
+  >();
   for (const s of allExported) {
-    if (!bySubsystem[s.customSubsystemId])
-      bySubsystem[s.customSubsystemId] = {};
-    if (!bySubsystem[s.customSubsystemId][s.key])
-      bySubsystem[s.customSubsystemId][s.key] = [];
-    bySubsystem[s.customSubsystemId][s.key].push(s);
+    let byKey = bySubsystem.get(s.customSubsystemId);
+    if (!byKey) {
+      byKey = new Map();
+      bySubsystem.set(s.customSubsystemId, byKey);
+    }
+    let bySource = byKey.get(s.key);
+    if (!bySource) {
+      bySource = new Map();
+      byKey.set(s.key, bySource);
+    }
+    const entries = bySource.get(s.source) ?? [];
+    entries.push(s);
+    bySource.set(s.source, entries);
   }
 
-  const customSubsystems: Record<
-    string,
-    Record<string, ExportedSettingEntry>
-  > = {};
-  for (const [subsystemId, byKey] of Object.entries(bySubsystem)) {
-    customSubsystems[subsystemId] = {};
-    for (const [key, entries] of Object.entries(byKey)) {
-      const first = entries[0];
-      if (first.arrayIndex !== undefined) {
-        const size = first.arraySize!;
-        const valueArray: ExportedSetting["value"][] = new Array(size);
-        for (const entry of entries) {
-          valueArray[entry.arrayIndex!] = entry.value;
+  const customSubsystems: SettingsExportDocument["customSubsystems"] =
+    Object.create(null);
+  for (const [subsystemId, byKey] of bySubsystem) {
+    customSubsystems[subsystemId] = Object.create(null);
+    for (const [key, bySource] of byKey) {
+      const sources: ExportedSettingEntry[] = [];
+      for (const entries of bySource.values()) {
+        const first = entries[0];
+        if (first.arrayIndex !== undefined) {
+          const size = first.arraySize!;
+          const valueArray: ExportedSetting["value"][] = new Array(size);
+          for (const entry of entries) {
+            valueArray[entry.arrayIndex!] = entry.value;
+          }
+          sources.push({
+            type: first.type,
+            source: first.source,
+            size,
+            value: valueArray,
+          });
+        } else {
+          sources.push({
+            type: first.type,
+            source: first.source,
+            value: first.value,
+          });
         }
-        customSubsystems[subsystemId][key] = {
-          type: first.type,
-          source: first.source,
-          size,
-          value: valueArray,
-        };
-      } else {
-        customSubsystems[subsystemId][key] = {
-          type: first.type,
-          source: first.source,
-          value: first.value,
-        };
       }
+      // Keep the existing single-source representation readable by older
+      // clients; repeated sources use separate complete entries for this key.
+      customSubsystems[subsystemId][key] =
+        sources.length === 1 ? sources[0] : sources;
     }
   }
 
@@ -193,7 +221,22 @@ export function parseSettingsExportJson(json: string): ExportedSetting[] {
         );
       }
       const label = `customSubsystems.${customSubsystemId}.${key}`;
-      result.push(...parseSettingEntry(entry, customSubsystemId, key, label));
+      const sources = Array.isArray(entry) ? entry : [entry];
+      const seen = new Set<number>();
+      for (const source of sources) {
+        const settings = parseSettingEntry(
+          source,
+          customSubsystemId,
+          key,
+          label
+        );
+        const id = settings[0]?.source;
+        if (id !== undefined && seen.has(id)) {
+          throw new Error(`${label} contains a duplicate source`);
+        }
+        if (id !== undefined) seen.add(id);
+        result.push(...settings);
+      }
     }
   }
   return result;

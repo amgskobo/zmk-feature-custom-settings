@@ -2,7 +2,7 @@ name: Test and Build Web UI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "codex/custom-settings-review"]
     paths:
       - "web/**"
       - "tests/web/**"
@@ -53,7 +53,7 @@ jobs:
           name: web-dist
           path: web/dist
       - name: Upload static files as artifact
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         id: deployment
         uses: actions/upload-pages-artifact@v3
         with:
@@ -61,7 +61,7 @@ jobs:
 
   release:
     needs: build
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
       pages: write
       id-token: write
