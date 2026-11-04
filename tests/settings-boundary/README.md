@@ -21,7 +21,7 @@ does not prevent Zephyr from loading unrelated workspace modules and their
 application Kconfig files into this standalone kernel fixture.
 
 Each scenario runs in a fresh process three times. The core variant has ten
-scenarios; the features variant has forty-nine scenarios, retaining the existing
+scenarios; the features variant has seventy-seven scenarios, retaining the existing
 data, mutation and notification checks and adding these structural cases:
 
 - `mutation-load-size`: churn the bounded view pool during the backend read of
@@ -130,3 +130,32 @@ after unlock and during nested lookups, including temporary/rollback values,
 long-array persistence, bounded retained-pool exhaustion and recovery. They keep
 all earlier scenarios and run in fresh processes with the same binary three
 times. `notification_cases.inc` owns the assertions and real-kernel handoff.
+
+## Blob validation and provisional load slots
+
+The additional `review-*` cases preserve all existing scenarios. Two crossed
+ordinal-like public names load into their original slots in both record orders.
+Malformed terminated-key/prefix/length, payload capacity/type/constraint and
+duplicate-key records are refused without claiming a new slot. Caller-owned key
+copies retain independent names and reject truncation/deleted slots. Atomic
+by-key array writes preserve later elements when growing. `review-scope-save`,
+`review-scope-discard` and `review-scope-reset` pause before the real paired guard,
+delete/reuse a selected slot on another thread, then check exact replacement
+state and a serial matching-target control. Every case uses the same binary
+three times in fresh processes. These checks do not establish physical storage
+or transport behavior.
+
+The fourteen additional `blob-*` scenarios retain every earlier boundary case.
+`blob-capacity` covers small pooled BYTES/STRING exact capacity and oversized
+typed/raw/quiet writes in all three modes, retaining temporary and durable
+values on refusal. `blob-constraints` compares typed/raw keyspace OPTIONS for
+BYTES/STRING, with valid quiet/temporary and unconstrained large controls.
+`blob-pool` keeps allocation failure distinct from size failure and preserves
+an independent pool member.
+
+`blob-load-{oversize,scratch,read,short,pool}` checks that a rejected stored
+record releases its provisional slot and allows a later create. The matching
+`blob-load-live-*` cases retain the existing live value, identity and pool links.
+`blob-load-valid` is a successful persisted-load/delete/reuse control. All run
+three times per features binary against the actual registry, settings loader
+and kernel; the backend injects failures. Physical NVS/power loss remains a gap.

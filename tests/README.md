@@ -55,6 +55,30 @@ establish physical transport/retention. Test-only core/tool dependencies are
 pinned; update pins only after reviewing the new sources and rerunning this
 owner matrix. No network updates are implicit in the owner test command.
 
+The review regressions add fifteen settings-boundary scenarios (features total
+78, core total 10), preserving every existing case and repeat. The scalar control
+retains fixed-width keyspaces with a zero blob-size ceiling; the key-copy control
+also rejects missing separators and checks complete retained names beyond the
+legacy scratch capacity. The request-decode
+checked init also exercises the actual generic write path under retained-view
+churn and reentrant keyspace replacement. The notification codec is admitted
+while unlocked and invoked after locking, checking protected scalar/body refusal
+with unlocked and metadata-only controls. The Web lifecycle suite delays one
+read across a new selection, verifies the next write's exact target/value and
+retains a successful current-read control. These are controlled kernel/codec/DOM
+checks; they do not establish physical USB/BLE delivery or persistence.
+
+`python3 tests/review_negative_control.py "$ISOLATED_OWNER/src" FAULT` restores
+one defect in a separate container source copy. `ordinal-lookup` must fail
+`review-ordinal-{forward,reverse}`; `stored-shape` must fail the malformed
+`review-load-*` cases; `scope-identity` must fail each `review-scope-*` case.
+Run the unchanged boundary entry with `CUSTOM_SETTINGS_SOURCE_DIR` selecting
+that copy and a fresh evidence directory. `notification` and `rpc-epoch` must
+fail the unchanged request-decode checked init in the canonical native owner
+entry from the isolated owner copy. The existing retained-view negative control
+also exercises the new generic RPC churn assertion. A control build must
+execute and fail the intended assertion; link or setup failure is BLOCKED.
+
 ## Reproducible isolated checks
 
 Use this owner's `west/west-test-isolated.yml` and its pinned test dependency
@@ -99,7 +123,7 @@ checks stored keyspace ordinal parsing through the production settings load
 handler. Decimal names must fit uint32 and the keyspace capacity before their
 payload is read. Invalid initial and later records cannot create a wrapped
 slot or alter valid entries and independent scalar settings; leading zeros
-remain accepted for valid slot numbers. The features binary runs forty-nine
+remain accepted for valid slot numbers. The features binary runs sixty-three
 scenarios, with the same binary repeated three times in fresh processes.
 `ordinal_overflow_negative_control.py` restores only unchecked accumulation
 in an isolated source copy; the unchanged real-loader assertion must fail.
@@ -184,7 +208,7 @@ contract proposed by upstream PR #58 without replacing any original assertion.
 unlock-to-dispatch view churn, nested listener churn, temporary values, temporary
 rollback, persistence beyond the view-pool size, and full retained-pool refusal
 with recovery. The race fails three times before retention while the serial
-control passes. The final features binary runs forty-nine scenarios, three
+control passes. The final features binary runs sixty-three scenarios, three
 times each. The controlled backend has room for the long-array records; its
 failure injection, prior cases and assertions remain intact. The fixture also
 verifies lock-free listeners, exact values/identities, independent settings and
@@ -229,3 +253,20 @@ not cancellation of bytes already sent over physical transport.
 The Web RPC fixture checks independent split sources for scalar/array JSON,
 prototype-named public keys, and large local BYTES/UTF-8 STRING imports. Only
 local large values use the chunk path; split chunk writes remain unsupported.
+
+## Blob validation and provisional load slots
+
+The fourteen additional `blob-*` scenarios retain every earlier boundary case.
+`blob-capacity` covers small pooled BYTES/STRING exact capacity and oversized
+typed/raw/quiet writes in all three modes, retaining temporary and durable
+values on refusal. `blob-constraints` compares typed/raw keyspace OPTIONS for
+BYTES/STRING, with valid quiet/temporary and unconstrained large controls.
+`blob-pool` keeps allocation failure distinct from size failure and preserves
+an independent pool member.
+
+`blob-load-{oversize,scratch,read,short,pool}` checks that a rejected stored
+record releases its provisional slot and allows a later create. The matching
+`blob-load-live-*` cases retain the existing live value, identity and pool links.
+`blob-load-valid` is a successful persisted-load/delete/reuse control. All run
+three times per features binary against the actual registry, settings loader
+and kernel; the backend injects failures. Physical NVS/power loss remains a gap.

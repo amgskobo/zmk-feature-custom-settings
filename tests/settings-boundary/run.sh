@@ -29,6 +29,12 @@ for variant in core features; do
     cases+=(mutation-notify-control mutation-notify-view mutation-notify-nested mutation-notify-temporary mutation-notify-rollback mutation-notify-persist mutation-notify-exhaustion mutation-control mutation-push mutation-pop mutation-mixed mutation-create mutation-rename mutation-delete mutation-order mutation-invalid-create mutation-invalid-rename mutation-shift mutation-invalid-element mutation-invalid-insert mutation-invalid-pop mutation-invalid-remove mutation-load-view)
         cases+=(array-error blob-error keyspace-error queue-array queue-blob queue-keyspace keyspace-ordinal rename-error rename-large-error array-ordinal)
         cases+=(mutation-load-size mutation-empty-save mutation-empty-discard mutation-empty-reset mutation-short-reset mutation-short-discard)
+        cases+=(blob-capacity blob-constraints blob-pool blob-load-valid)
+        cases+=(blob-load-oversize blob-load-scratch blob-load-read blob-load-short blob-load-pool)
+        cases+=(blob-load-live-oversize blob-load-live-scratch blob-load-live-read blob-load-live-short blob-load-live-pool)
+        cases+=(review-ordinal-forward review-ordinal-reverse review-load-missing review-load-prefix review-load-long review-load-payload review-load-duplicate review-load-type review-load-constraint review-copy review-grow)
+        cases+=(review-scope-save review-scope-discard review-scope-reset)
+        cases+=(review-scalars)
     fi
     args=()
     if [ -n "${CUSTOM_SETTINGS_SOURCE_DIR:-}" ]; then

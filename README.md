@@ -460,6 +460,10 @@ Which knob is authoritative:
 - `CONFIG_ZMK_CUSTOM_SETTINGS_LARGE_VALUE_MAX_SIZE` is the ceiling for any
   per-setting `max_size` and for the shared chunk/record staging buffers.
 
+Per-setting `max_size` also applies to small pooled blobs and temporary writes.
+An oversized write returns `-EMSGSIZE` before changing the existing memory,
+temporary override or persistent value; it is never truncated.
+
 A value larger than `CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE` is reachable
 through:
 
@@ -709,6 +713,9 @@ A rename keeps the slot index, so anything that refers to an entry by slot
 (such as a keymap parameter) keeps pointing at it.
 
 Stored keyspace names use the decimal slot ordinal (`<key_prefix>#<index>`).
+Public keys that resemble ordinals remain supported: a key such as `macro/#1`
+does not change the slot's storage identity. Loading resolves registered
+settings and slot ordinals independently of live public-key lookup.
 Loading accepts only decimal digits whose value fits uint32 and is less than
 `max_entries`; leading zeros are allowed. Empty, non-decimal, out-of-capacity
 or overflowing ordinals are ignored before reading the payload. They cannot
@@ -724,12 +731,26 @@ entries read and write like any other
 [large value](#large-values-per-setting-max_size) (streamed on read, chunked
 on write).
 
+Raw BYTES/STRING keyspace writes within the fixed carrier enforce the same
+payload constraints as typed writes, including quiet and temporary operations.
+Raw payloads larger than the carrier remain supported without constraints. If
+a meaningful payload constraint is present, such a write returns `-ENOTSUP`
+without changing the entry because the scalar validator cannot represent it.
+
 Once created, an entry behaves like any other setting: it is find-able
 (`zmk_custom_setting_find("my_module", "macro/my-macro-1")`), readable and
 writable by its key with the ordinary firmware API and `GetSetting`/
 `WriteSetting` RPC, discoverable via the existing `key_prefix` scope filter
 (`ListSettingsRequest{scope:{key_prefix:"macro/"}}` returns every live
 entry), and covered by save/discard/reset scope operations.
+
+A rejected stored record releases only a slot newly claimed by that load.
+Stored blobs must contain a terminated, bounded key with the registered prefix,
+a unique public name and a payload matching the keyspace's type, constraints
+and size limit. Rejection preserves an already live entry's previous contents.
+Read errors, short reads, size refusals and pool exhaustion leave that slot
+available for a later valid entry. A failed reload of an existing live slot
+keeps its previous value and pool ownership. The rejected record is not erased.
 
 Persisted entries survive a reboot with **no module code running on their
 behalf**: each entry persists under a stable per-slot storage record
@@ -962,6 +983,20 @@ This conservatively includes unrelated keyspace lifecycle changes.
 Array element views can be recycled by the bounded view pool, and deleted
 keyspace slots can be reused; borrowed descriptors are not permanent identities
 across those lifecycle changes. Use by-key helpers for one guarded lookup/use.
+`zmk_custom_setting_copy_public_key()` copies a name into caller-owned storage
+under the RAM guard and refuses truncation. The older pointer-returning helper
+uses shared scratch for keyspaces and must not be retained across calls.
+`zmk_custom_setting_write_array_element_by_key()` resolves, grows and writes an
+array element under one guard. Passing size zero grows to at least `index + 1`
+without shrinking a later element; a nonzero size retains exact-length behavior.
+
+Generic RPC writes bind permission, conversion and mutation to one guarded
+target. A converter that deletes/reuses a keyspace target causes `-EAGAIN`;
+the replacement remains unchanged. Scoped keyspace operations similarly select
+and mutate each entry under one guard, then dispatch notifications after
+unlocking. Protected local notifications recheck read permission when encoding,
+including after a transport wait. A lock during encoding can abort the response;
+these checks do not revoke bytes already emitted while authorized.
 
 Storage/mutation operations and borrowed-value callbacks acquire Zephyr's
 settings mutex before the module state mutex to avoid a load/write lock

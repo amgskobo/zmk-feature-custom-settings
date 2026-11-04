@@ -29,6 +29,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/settings/settings.h>
+#include <zmk/behavior.h>
 
 #include <cormoran/zmk/custom_settings.h>
 
@@ -225,6 +226,75 @@ int keyspace_validate_payload(const struct zmk_custom_setting_keyspace *keyspace
     return 0;
 }
 
+int keyspace_validate_storage_blob_locked(const struct zmk_custom_setting *setting,
+                                          const void *data, size_t size) {
+    const struct zmk_custom_setting_keyspace *keyspace = setting->_keyspace;
+    const uint8_t *bytes = data;
+    const uint8_t *separator = size ? memchr(bytes, '\0', size) : NULL;
+    if (!separator) {
+        return -EINVAL;
+    }
+    size_t key_size = (size_t)(separator - bytes) + 1;
+    if (key_size <= 1 || key_size > keyspace->max_key_len ||
+        !keyspace_key_matches_prefix(keyspace, (const char *)bytes)) {
+        return -EINVAL;
+    }
+    int existing = keyspace_slot_index_for_key_locked(
+        (struct zmk_custom_setting_keyspace *)keyspace, (const char *)bytes);
+    if (existing >= 0 && &keyspace->slots[existing].setting != setting) {
+        return -EEXIST;
+    }
+    const uint8_t *payload = bytes + key_size;
+    size_t payload_size = size - key_size;
+    if ((keyspace->value_type == ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES ||
+         keyspace->value_type == ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING) &&
+        payload_size > keyspace->max_size) {
+        return -EMSGSIZE;
+    }
+    switch (keyspace->value_type) {
+    case ZMK_CUSTOM_SETTING_VALUE_TYPE_INT32:
+        if (payload_size != sizeof(int32_t)) {
+            return -EINVAL;
+        }
+        break;
+    case ZMK_CUSTOM_SETTING_VALUE_TYPE_BOOL:
+        if (payload_size != sizeof(bool) || payload[0] > 1) {
+            return -EINVAL;
+        }
+        break;
+    case ZMK_CUSTOM_SETTING_VALUE_TYPE_BEHAVIOR:
+        /* The packed storage form omits trailing zero parameters. Behavior
+         * IDs are range checked now and may resolve after settings loading. */
+        if (payload_size != sizeof(zmk_behavior_local_id_t) &&
+            payload_size != sizeof(zmk_behavior_local_id_t) + sizeof(uint32_t) &&
+            payload_size != sizeof(zmk_behavior_local_id_t) + 2 * sizeof(uint32_t)) {
+            return -EINVAL;
+        }
+        break;
+    case ZMK_CUSTOM_SETTING_VALUE_TYPE_BYTES:
+    case ZMK_CUSTOM_SETTING_VALUE_TYPE_STRING:
+        break;
+    default:
+        return -EINVAL;
+    }
+    if (payload_size <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE) {
+        struct zmk_custom_setting_value value = {0};
+        value_from_raw(&value, keyspace->value_type, payload, payload_size);
+        const struct zmk_custom_setting shape = {
+            .value_type = keyspace->value_type,
+            .constraints = keyspace->constraints,
+            .constraints_count = keyspace->constraints_count,
+        };
+        return validate_stored_setting_value(&shape, &value);
+    }
+    for (size_t i = 0; i < keyspace->constraints_count; i++) {
+        if (keyspace->constraints[i].type != ZMK_CUSTOM_SETTING_CONSTRAINT_NONE) {
+            return -ENOTSUP;
+        }
+    }
+    return 0;
+}
+
 /* Shared assembly storage is protected by the paired settings/state guard.
  * No additional lock can invert its order with settings loaders or callbacks. */
 static uint8_t keyspace_blob_scratch[ZMK_CUSTOM_SETTINGS_KEYSPACE_BLOB_SCRATCH_SIZE];
@@ -320,6 +390,22 @@ int keyspace_write_raw_payload_locked(const struct zmk_custom_setting *setting, 
     }
     if (size > keyspace->max_size) {
         return -EMSGSIZE;
+    }
+    if (size <= CONFIG_ZMK_CUSTOM_SETTINGS_VALUE_MAX_SIZE) {
+        struct zmk_custom_setting_value value = {0};
+        value_from_raw(&value, keyspace->value_type, data, size);
+        int ret = keyspace_validate_payload(keyspace, &value);
+        if (ret < 0) {
+            return ret;
+        }
+    } else {
+        /* The scalar constraint validator uses the fixed carrier. Do not
+         * silently accept a large payload whose constraints it cannot check. */
+        for (size_t i = 0; i < keyspace->constraints_count; i++) {
+            if (keyspace->constraints[i].type != ZMK_CUSTOM_SETTING_CONSTRAINT_NONE) {
+                return -ENOTSUP;
+            }
+        }
     }
     return keyspace_setting_live_locked(setting)
                ? keyspace_write_raw_payload_with_key_locked(setting, NULL, data, size, mode)
