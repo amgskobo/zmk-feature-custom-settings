@@ -803,8 +803,15 @@ const struct zmk_custom_setting *zmk_custom_setting_find_array(const char *custo
 const struct zmk_custom_setting *
 zmk_custom_setting_find_array_element(const char *custom_subsystem_id, const char *key,
                                       uint32_t index);
-/* Return the public key exposed by RPC. Array elements return their base key. */
+/* Return a borrowed public key. Keyspace storage is shared scratch and may be
+ * overwritten by another lookup; use copy_public_key when retaining the name. */
 const char *zmk_custom_setting_public_key(const struct zmk_custom_setting *setting);
+/* Copy the public key while holding the RAM guard. Array elements use their
+ * base key. Returns -ENAMETOOLONG instead of truncating, or -ENOENT for an
+ * unbound keyspace slot. The caller must still resolve borrowed array views
+ * and lifecycle-sensitive slot identities within their owning guard. */
+int zmk_custom_setting_copy_public_key(const struct zmk_custom_setting *setting, char *buffer,
+                                       size_t capacity);
 /* static inline (not out-of-line) so it folds to a compile-time constant
  * `false` when CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY is off: every
  * `if (zmk_custom_setting_is_array(setting)) { ...array-only code... }` branch
@@ -877,6 +884,14 @@ int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *sett
                                            const struct zmk_custom_setting_value *value,
                                            uint32_t array_size,
                                            enum zmk_custom_setting_write_mode mode);
+/* Resolve, optionally grow, and write one element under one guard. A nonzero
+ * array_size specifies the exact length; zero grows to at least index+1
+ * without shrinking concurrent growth. Notifications run after unlocking. */
+int zmk_custom_setting_write_array_element_by_key(const char *custom_subsystem_id, const char *key,
+                                                  uint32_t index,
+                                                  const struct zmk_custom_setting_value *value,
+                                                  uint32_t array_size,
+                                                  enum zmk_custom_setting_write_mode mode);
 /* Array structural mutations (push/pop/insert/remove and length-changing
  * write_array_element) accept MEMORY/PERSIST only. TEMPORARY can override an
  * existing element without changing length. Invalid modes leave state intact.

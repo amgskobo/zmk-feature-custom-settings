@@ -1,5 +1,6 @@
 import { errorKind } from "./logPrivacy";
 import { Fragment, useContext, useEffect, useRef, useState } from "react";
+import type { ContextType } from "react";
 import "./App.css";
 import { call_rpc } from "@zmkfirmware/zmk-studio-ts-client";
 import { connect as serial_connect } from "@zmkfirmware/zmk-studio-ts-client/transport/serial";
@@ -137,6 +138,159 @@ export function RPCTestSection() {
   return <SettingsSession key={key} />;
 }
 
+async function collectListFromSession(
+  app: NonNullable<ContextType<typeof ZMKAppContext>>,
+  subsystemIndex: number,
+  session: { active: boolean; cancel: Set<() => void> },
+  callCustomRequest: (request: Request) => Promise<Response>,
+  requestScope: SettingScope,
+  includeMeta: boolean,
+  includeDefault: boolean
+): Promise<Setting[]> {
+  const startedAt = performance.now();
+  let decodeFailures = 0;
+  let completionReason = "request-failed";
+  console.info("[custom-settings] list start", {
+    allSources: scopeTargetsAll(requestScope),
+    requireMeta: includeMeta,
+    requireDefault: includeDefault,
+  });
+  const collected: Setting[] = [];
+  const waitForQuiet = scopeTargetsAll(requestScope);
+  let expectedCount: number | undefined;
+  let quietTimeout: ReturnType<typeof setTimeout> | undefined;
+  let collectionTimeout: ReturnType<typeof setTimeout> | undefined;
+  let collectionFailure: Error | undefined;
+  let resolveList: () => void = () => {};
+  let isComplete = false;
+
+  const listComplete = new Promise<void>((resolve) => {
+    resolveList = resolve;
+  });
+
+  const completeList = (reason: string) => {
+    if (isComplete) {
+      return;
+    }
+    isComplete = true;
+    if (quietTimeout) {
+      clearTimeout(quietTimeout);
+      quietTimeout = undefined;
+    }
+    if (collectionTimeout) {
+      clearTimeout(collectionTimeout);
+      collectionTimeout = undefined;
+    }
+    completionReason = reason;
+    resolveList();
+  };
+
+  const scheduleQuietResolve = () => {
+    if (quietTimeout) {
+      clearTimeout(quietTimeout);
+    }
+    quietTimeout = setTimeout(() => {
+      completeList("quiet-timeout");
+    }, LIST_NOTIFICATION_TIMEOUT_MS);
+  };
+
+  const unsubscribe = app.onNotification({
+    type: "custom",
+    subsystemIndex,
+    callback: (customNotification) => {
+      if (!session.active || isComplete) return;
+      let notification;
+      try {
+        notification = SettingsNotification.decode(customNotification.payload);
+      } catch {
+        decodeFailures++;
+        return;
+      }
+      if (
+        notification.setting?.kind ===
+          SettingNotificationKind.SETTING_NOTIFICATION_KIND_LIST_ITEM &&
+        notification.setting.setting
+      ) {
+        collected.push(notification.setting.setting);
+        if (
+          expectedCount !== undefined &&
+          !waitForQuiet &&
+          collected.length >= expectedCount
+        ) {
+          completeList("expected-count");
+        } else if (waitForQuiet) {
+          scheduleQuietResolve();
+        }
+      }
+    },
+  });
+
+  let subscribed = true;
+  const stopSubscription = () => {
+    if (subscribed) {
+      subscribed = false;
+      unsubscribe();
+    }
+  };
+  const retireList = () => {
+    stopSubscription();
+    completeList("session-retired");
+  };
+  session.cancel.add(retireList);
+
+  try {
+    const resp = await withTimeout(
+      callCustomRequest(
+        Request.create({
+          listSettings: {
+            scope: requestScope,
+            requireMeta: includeMeta,
+            requireDefault: includeDefault,
+          },
+        })
+      ),
+      LIST_REQUEST_TIMEOUT_MS,
+      "List request timed out"
+    );
+    if (resp.error) {
+      throw new Error(resp.error.message || "List failed");
+    }
+    expectedCount = resp.status?.affectedCount;
+    collectionTimeout = setTimeout(() => {
+      collectionFailure = new Error("List notifications timed out");
+      completeList("notification-timeout");
+    }, LIST_REQUEST_TIMEOUT_MS);
+
+    if (!waitForQuiet && expectedCount !== undefined) {
+      if (collected.length >= expectedCount) {
+        completeList("expected-count");
+      }
+    } else {
+      scheduleQuietResolve();
+    }
+    await listComplete;
+    if (!session.active) throw new Error("Settings session retired");
+    if (collectionFailure) throw collectionFailure;
+  } finally {
+    session.cancel.delete(retireList);
+    stopSubscription();
+    if (collectionTimeout) clearTimeout(collectionTimeout);
+    if (quietTimeout) {
+      clearTimeout(quietTimeout);
+    }
+    // The reason is one of this file's fixed literals; the console guard
+    // keeps only the first string argument.
+    console.info(`[custom-settings] list complete: ${completionReason}`, {
+      collected: collected.length,
+      expectedCount,
+      decodeFailures,
+      elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
+    });
+  }
+
+  return collected;
+}
+
 function SettingsSession() {
   const lifetime = useRef({ active: true, cancel: new Set<() => void>() });
   useEffect(() => {
@@ -183,6 +337,8 @@ function SettingsSession() {
   const [response, setResponse] = useState<string | null>(null);
   const [jsonText, setJsonText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const selectionGeneration = useRef(0);
+  const readGeneration = useRef(0);
 
   const subsystem = zmkApp?.findSubsystem(SUBSYSTEM_IDENTIFIER) ?? undefined;
   const trimmedFilterCustomSubsystemId = filterCustomSubsystemId.trim();
@@ -306,158 +462,20 @@ function SettingsSession() {
   };
 
   const collectListSettings = async (
-    requestScope: SettingScope = {
-      source: SOURCE_ALL,
-    },
+    requestScope: SettingScope = { source: SOURCE_ALL },
     includeMeta = false,
     includeDefault = false
   ): Promise<Setting[]> => {
     if (!zmkApp || !subsystem) return [];
-
-    const startedAt = performance.now();
-    let decodeFailures = 0;
-    let completionReason = "request-failed";
-    console.info("[custom-settings] list start", {
-      allSources: scopeTargetsAll(requestScope),
-      requireMeta: includeMeta,
-      requireDefault: includeDefault,
-    });
-    const collected: Setting[] = [];
-    const waitForQuiet = scopeTargetsAll(requestScope);
-    let expectedCount: number | undefined;
-    let quietTimeout: ReturnType<typeof setTimeout> | undefined;
-    let collectionTimeout: ReturnType<typeof setTimeout> | undefined;
-    let collectionFailure: Error | undefined;
-    let resolveList: () => void = () => {};
-    let isComplete = false;
-
-    const listComplete = new Promise<void>((resolve) => {
-      resolveList = resolve;
-    });
-
-    const completeList = (reason: string) => {
-      if (isComplete) {
-        return;
-      }
-      isComplete = true;
-      if (quietTimeout) {
-        clearTimeout(quietTimeout);
-        quietTimeout = undefined;
-      }
-      if (collectionTimeout) {
-        clearTimeout(collectionTimeout);
-        collectionTimeout = undefined;
-      }
-      completionReason = reason;
-      resolveList();
-    };
-
-    const scheduleQuietResolve = () => {
-      if (quietTimeout) {
-        clearTimeout(quietTimeout);
-      }
-      quietTimeout = setTimeout(() => {
-        completeList("quiet-timeout");
-      }, LIST_NOTIFICATION_TIMEOUT_MS);
-    };
-
-    const unsubscribe = zmkApp.onNotification({
-      type: "custom",
-      subsystemIndex: subsystem.index,
-      callback: (customNotification) => {
-        if (!lifetime.current.active || isComplete) return;
-        let notification;
-        try {
-          notification = SettingsNotification.decode(
-            customNotification.payload
-          );
-        } catch {
-          decodeFailures++;
-          return;
-        }
-        if (
-          notification.setting?.kind ===
-            SettingNotificationKind.SETTING_NOTIFICATION_KIND_LIST_ITEM &&
-          notification.setting.setting
-        ) {
-          collected.push(notification.setting.setting);
-          if (
-            expectedCount !== undefined &&
-            !waitForQuiet &&
-            collected.length >= expectedCount
-          ) {
-            completeList("expected-count");
-          } else if (waitForQuiet) {
-            scheduleQuietResolve();
-          }
-        }
-      },
-    });
-
-    let subscribed = true;
-    const stopSubscription = () => {
-      if (subscribed) {
-        subscribed = false;
-        unsubscribe();
-      }
-    };
-    const retireList = () => {
-      stopSubscription();
-      completeList("session-retired");
-    };
-    lifetime.current.cancel.add(retireList);
-
-    try {
-      const resp = await withTimeout(
-        callCustomRequest(
-          Request.create({
-            listSettings: {
-              scope: requestScope,
-              requireMeta: includeMeta,
-              requireDefault: includeDefault,
-            },
-          })
-        ),
-        LIST_REQUEST_TIMEOUT_MS,
-        "List request timed out"
-      );
-      if (resp.error) {
-        throw new Error(resp.error.message || "List failed");
-      }
-      expectedCount = resp.status?.affectedCount;
-      collectionTimeout = setTimeout(() => {
-        collectionFailure = new Error("List notifications timed out");
-        completeList("notification-timeout");
-      }, LIST_REQUEST_TIMEOUT_MS);
-
-      if (!waitForQuiet && expectedCount !== undefined) {
-        if (collected.length >= expectedCount) {
-          completeList("expected-count");
-        }
-      } else {
-        scheduleQuietResolve();
-      }
-      await listComplete;
-      if (!lifetime.current.active) throw new Error("Settings session retired");
-      if (collectionFailure) throw collectionFailure;
-    } finally {
-      lifetime.current.cancel.delete(retireList);
-      stopSubscription();
-      if (collectionTimeout) clearTimeout(collectionTimeout);
-      if (quietTimeout) {
-        clearTimeout(quietTimeout);
-      }
-      // The reason is one of this file's fixed literals; the console guard
-      // keeps only the first string argument.
-      console.info(`[custom-settings] list complete: ${completionReason}`, {
-        collected: collected.length,
-        expectedCount,
-        decodeFailures,
-        elapsedMs: Math.max(0, Math.round(performance.now() - startedAt)),
-      });
-    }
-
-    return collected;
+    return collectListFromSession(
+      zmkApp,
+      subsystem.index,
+      lifetime.current,
+      callCustomRequest,
+      requestScope,
+      includeMeta,
+      includeDefault
+    );
   };
 
   const exportJson = async () => {
@@ -523,6 +541,12 @@ function SettingsSession() {
   };
 
   const getSetting = async () => {
+    const ticket = ++readGeneration.current;
+    const selection = selectionGeneration.current;
+    const isCurrent = () =>
+      lifetime.current.active &&
+      readGeneration.current === ticket &&
+      selectionGeneration.current === selection;
     setIsLoading(true);
     setResponse(null);
 
@@ -532,6 +556,7 @@ function SettingsSession() {
           getSetting: { setting: settingRef, requireMeta, requireDefault },
         })
       );
+      if (!isCurrent()) return;
       if (resp.error) {
         setResponse(`Error: ${resp.error.message}`);
         return;
@@ -543,18 +568,20 @@ function SettingsSession() {
         return;
       }
 
-      setSetting(fetched);
+      setIsLoading(false);
+      applySettingToEditor(fetched);
       // GetSetting streams a value of any size directly, so formatSetting has
       // everything it needs - a missing `value` here means the setting is
       // device-private or secure while locked.
       setResponse(formatSetting(fetched));
     } catch (error) {
+      if (!isCurrent()) return;
       console.error("Get setting failed:", errorKind(error));
       setResponse(
         `Failed: ${error instanceof Error ? error.message : "Unknown error"}`
       );
     } finally {
-      setIsLoading(false);
+      if (isCurrent()) setIsLoading(false);
     }
   };
 
@@ -724,6 +751,7 @@ function SettingsSession() {
     nextSetting: Setting,
     nextSource = nextSetting.source
   ) => {
+    selectionGeneration.current++;
     setSetting(nextSetting);
     setEditorSource(nextSource);
     setEditorCustomSubsystemId(
@@ -747,6 +775,9 @@ function SettingsSession() {
   };
 
   const selectSettingForEdit = (nextSetting: Setting) => {
+    selectionGeneration.current++;
+    setIsLoading(false);
+    setResponse(null);
     if (setting && sameSettingIdentity(setting, nextSetting)) {
       setSetting(null);
       return;
@@ -756,6 +787,9 @@ function SettingsSession() {
   };
 
   const handleEditorSourceChange = (nextSource: number) => {
+    selectionGeneration.current++;
+    setIsLoading(false);
+    setResponse(null);
     if (!setting) {
       setEditorSource(nextSource);
       return;

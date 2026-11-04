@@ -1,8 +1,8 @@
 #include "init_result.h"
 /* SPDX-License-Identifier: MIT */
 /*
- * Regression test for the nanopb oneof-submessage callback wipe found on
- * real hardware: a SettingValue payload callback wired BEFORE pb_decode()
+ * Regression test for nanopb oneof-submessage callback lifetime: a
+ * SettingValue payload callback wired BEFORE pb_decode()
  * into Request.write_setting/.create_setting is zeroed when nanopb selects
  * the oneof arm, so the STRING/BYTES payload was silently skipped and
  * which_value_type stayed 0 ("Invalid request"). This decodes full
@@ -12,6 +12,7 @@
  */
 #include "rpc_write_mode_cases.inc"
 #include "scope_permission_cases.inc"
+#include "review_rpc_cases.inc"
 
 static int custom_settings_request_decode_regression_test_init(void) {
     static uint8_t enc_buf[64];
@@ -108,6 +109,10 @@ static int custom_settings_request_decode_regression_test_init(void) {
     if (permission_result) {
         return permission_result;
     }
+    int review_result = custom_settings_review_rpc_cases();
+    if (review_result) {
+        return review_result;
+    }
 
     LOG_INF("PASS: custom_settings_request_decode_regression write=%s create=%u bytes", payload,
             (unsigned)sizeof(blob_payload));
@@ -117,17 +122,17 @@ static int custom_settings_request_decode_regression_test_init(void) {
 OWNER_CHECKED_SYS_INIT(custom_settings_request_decode_regression_test_init, APPLICATION, 99);
 
 /*
- * Regression test for the second oneof-callback hazard found on real
- * hardware (split rig): a Notification DECODED with the message-level
+ * Regression test for a oneof-callback lifetime hazard: a Notification DECODED
+ * with the message-level
  * precallback wired must have cb_notification_type cleared before it is
  * RE-ENCODED (the central's relayed-notification republish path,
  * relayed_notification_to_public). nanopb's encoder invokes
  * cb_<oneof>.funcs.encode for SUBMSG_W_CB arms, and after a struct copy the
  * funcs union still holds the decode precallback - which then runs in
  * encode context and overwrites the value union with the decode callback's
- * pointers. On hardware every relayed INT32 read back as 362819 (the Thumb
- * address of decode_into_bounded_scratch) and every BYTES/STRING value
- * vanished. This mirrors the decode -> sanitize -> re-encode sequence and
+ * pointers. A copied decode callback must not run as an encode callback:
+ * otherwise an INT32 can become a callback address and BYTES/STRING data can
+ * be lost. This mirrors the decode -> sanitize -> re-encode sequence and
  * asserts both an INT32 and a STRING value survive the round trip.
  */
 static int custom_settings_notification_reencode_regression_test_init(void) {
@@ -186,7 +191,7 @@ static int custom_settings_notification_reencode_regression_test_init(void) {
 
         /* 3. Sanitize + retarget exactly like the republish path, then
          * re-encode. Without the cb clear this second encode corrupts the
-         * value (the hardware bug). */
+         * value. */
         cormoran_zmk_custom_settings_Notification republish = decoded;
         republish.cb_notification_type = (pb_callback_t){0};
         if (republish.notification_type.setting.setting.has_value) {
@@ -241,10 +246,9 @@ static int custom_settings_notification_reencode_regression_test_init(void) {
 OWNER_CHECKED_SYS_INIT(custom_settings_notification_reencode_regression_test_init, APPLICATION, 99);
 
 /*
- * Regression test for the RPC-response starvation bug (hardware-confirmed):
- * a mutating Studio RPC timed out waiting for its USB CDC response because the
- * change event it raised queued a redundant Studio notification that starved
- * the still-in-flight response on the single-connection transport. The fix
+ * Regression test for RPC response/notification ordering: a mutating Studio
+ * RPC must not queue a redundant notification that can compete with its
+ * still-in-flight response on a single-connection transport. The fix
  * brackets RPC dispatch with notify_suppress_begin/end so an RPC-originated
  * mutation queues ZERO notifications, while non-RPC mutations keep notifying.
  *

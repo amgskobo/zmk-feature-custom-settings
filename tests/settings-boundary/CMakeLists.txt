@@ -21,7 +21,7 @@ target_compile_definitions(app PRIVATE CONFIG_ZMK_LOG_LEVEL=0
   CONFIG_ZMK_CUSTOM_SETTINGS_TEMP_SLOTS=2 CONFIG_ZMK_CUSTOM_SETTINGS_TEMP_SLOT_SIZE=32)
 if(SETTINGS_BOUNDARY_FEATURES)
   target_link_options(zephyr_interface INTERFACE -Wl,--wrap=custom_settings_state_lock
-    -Wl,--wrap=custom_settings_state_unlock)
+    -Wl,--wrap=custom_settings_state_unlock -Wl,--wrap=z_impl_k_mutex_lock)
   target_sources(app PRIVATE "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_array.c"
     "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_pool.c"
     "${CUSTOM_SETTINGS_SOURCE_DIR}/custom_settings_keyspace.c"

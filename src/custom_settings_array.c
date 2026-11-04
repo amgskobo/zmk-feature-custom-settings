@@ -387,10 +387,9 @@ static bool structural_write_mode(enum zmk_custom_setting_write_mode mode) {
 }
 
 /* Caller holds the paired guard from selection through mutation. */
-static int write_array_element_locked(const struct zmk_custom_setting *setting,
-                                      const struct zmk_custom_setting_value *value,
-                                      uint32_t array_size,
-                                      enum zmk_custom_setting_write_mode mode) {
+int write_array_element_locked(const struct zmk_custom_setting *setting,
+                               const struct zmk_custom_setting_value *value, uint32_t array_size,
+                               enum zmk_custom_setting_write_mode mode) {
     if (!zmk_custom_setting_is_array(setting) || setting->array_index >= array_size) {
         return -EINVAL;
     }
@@ -421,6 +420,33 @@ int zmk_custom_setting_write_array_element(const struct zmk_custom_setting *sett
     custom_settings_state_lock();
     retain_setting_notification_locked(setting);
     int ret = write_array_element_locked(setting, value, array_size, mode);
+    finish_setting_change_locked(setting,
+                                 mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
+                                     ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+                                     : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+                                 false, ret == 0);
+    return ret;
+}
+
+int zmk_custom_setting_write_array_element_by_key(const char *custom_subsystem_id, const char *key,
+                                                  uint32_t index,
+                                                  const struct zmk_custom_setting_value *value,
+                                                  uint32_t array_size,
+                                                  enum zmk_custom_setting_write_mode mode) {
+    if (!value) {
+        return -EINVAL;
+    }
+    custom_settings_state_lock();
+    const struct zmk_custom_setting *setting =
+        zmk_custom_setting_find_array_element(custom_subsystem_id, key, index);
+    retain_setting_notification_locked(setting);
+    int ret = -ENOENT;
+    if (setting) {
+        if (array_size == 0) {
+            array_size = MAX(setting->array_state->size, index + 1);
+        }
+        ret = write_array_element_locked(setting, value, array_size, mode);
+    }
     finish_setting_change_locked(setting,
                                  mode == ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
                                      ? ZMK_CUSTOM_SETTING_CHANGED_SAVED

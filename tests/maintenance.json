@@ -28,6 +28,12 @@
   },
   "regression_fixtures": [
     {
+      "fixture": "tests/settings-boundary/review_storage_cases.inc; tests/support/review_rpc_cases.inc; tests/web/sessionLifecycle.spec.tsx",
+      "contract": "Distinct ordinal-like public names, stored key/payload validation, caller-owned key copies, atomic grow-only by-key array writes, guarded scope/RPC identities, late notification authorization and selection-owned Web reads; all previous scenarios/snapshots retained.",
+      "negative_control": "Restore each reviewed guard only in isolated production sources; unchanged corresponding owner scenarios must fail. New executions and negative-control results are required before claiming PASS.",
+      "limits": "Controlled real kernel/registry/nanopb and DOM; no physical transport, durability or device acceptance. Features boundary total78, core10, three identical-binary repeats; fixed-width zero blob-size ceilings and complete retained-key copies have explicit controls."
+    },
+    {
       "fixture": "scope_permission_cases.inc and mutation-load-size/empty-*/short-* boundary cases",
       "contract": "Secure keyspace namespaces require unlock for scoped mutations even when empty; array size loads retain immutable identity; scope operations include empty arrays and reset removes inactive persisted slots.",
       "negative_control": "Original-source runs fail the permission, load-size and empty-array checks; independent scalar permissions and unchanged load-view/mutation controls pass.",
@@ -110,6 +116,12 @@
       "contract": "JSON export/import retains each split source independently; large local BYTES and UTF-8 STRING imports use ordered chunks with one final commit.",
       "negative_control": "Original exporter/import path fails source count, prototype-key and large-import assertions.",
       "limits": "Controlled DOM/RPC boundary; split chunk writes remain unsupported."
+    },
+    {
+      "fixture": "tests/settings-boundary/blob_validation_cases.inc",
+      "contract": "Fourteen additional blob capacity/constraint/provisional-load cases; all prior49 features and10 core scenarios retained, each repeated3 times. Exact BYTES/STRING/quiet/temp/durable-state, ENOSPC, valid-load and failed-live-reload controls.",
+      "negative_control": "Same owner assertions fail on baseline90e1c46 production source for small truncation, raw keyspace constraints and provisional load leakage; no assertion removed.",
+      "limits": "Actual registry, settings and kernel with controlled backend; physical NVS and transport remain separate."
     }
   ]
 }

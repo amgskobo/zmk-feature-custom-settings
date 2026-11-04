@@ -89,6 +89,80 @@ describe("Custom Settings session ownership", () => {
   afterEach(() => {
     jest.useRealTimers();
   });
+  it("retires a delayed read when another setting is selected", async () => {
+    const current = app();
+    render(panel(current));
+    await flush();
+    const alpha = Setting.create({
+      customSubsystemIndex: 1,
+      key: "fixture/alpha",
+      source: 0,
+      value: { int32Value: 11 },
+    });
+    const beta = Setting.create({
+      customSubsystemIndex: 1,
+      key: "fixture/beta",
+      source: 0,
+      value: { int32Value: 22 },
+    });
+    emit(current, alpha);
+    emit(current, beta);
+    await loaded();
+    fireEvent.click(screen.getByRole("button", { name: alpha.key }));
+    const pending = deferred<ReturnType<typeof status>>();
+    (call_rpc as jest.Mock).mockReturnValueOnce(pending.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Read" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: beta.key }));
+    await act(async () => {
+      pending.resolve({
+        custom: {
+          call: {
+            payload: Response.encode(
+              Response.create({
+                getSetting: {
+                  setting: { ...alpha, value: { int32Value: 99 } },
+                },
+              }),
+            ).finish(),
+          },
+        },
+      });
+    });
+    await flush();
+    expect(
+      screen.getByRole("button", { name: beta.key }).closest("tr"),
+    ).toHaveClass("selected-setting-row");
+    expect(
+      screen.getByRole("button", { name: alpha.key }).closest("tr"),
+    ).not.toHaveClass("selected-setting-row");
+    const section = screen
+      .getByRole("heading", { name: "Update Value" })
+      .closest("section")!;
+    expect(within(section).getByLabelText(/^Value$/i)).toHaveValue("22");
+    fireEvent.click(within(section).getByRole("button", { name: "Write" }));
+    await flush();
+    const write = requests()
+      .filter((request) => request.writeSetting)
+      .at(-1)!.writeSetting!;
+    expect(write.setting).toMatchObject({ key: beta.key, source: 0 });
+    expect(write.value?.int32Value).toBe(22);
+    // A current read still updates the selected editor normally.
+    (call_rpc as jest.Mock).mockResolvedValueOnce({
+      custom: {
+        call: {
+          payload: Response.encode(
+            Response.create({
+              getSetting: { setting: { ...beta, value: { int32Value: 77 } } },
+            }),
+          ).finish(),
+        },
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Read" }));
+    await flush();
+    expect(within(section).getByLabelText(/^Value$/i)).toHaveValue("77");
+  });
   it.each(["connection", "index", "catalog"])(
     "retires old create replies and editor state on %s replacement",
     async (change) => {

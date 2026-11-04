@@ -84,6 +84,7 @@ static int32_t disk[2] = {20, 21};
 static int fail_save = -1, read_error, load_result = 99, writer_result = 99;
 /* Fails only the extra record with this storage name. */
 static const char *read_error_name;
+static const char *read_short_name;
 static unsigned saved[2], discarded, initialized, changes;
 static const char *operation;
 
@@ -231,6 +232,11 @@ static ssize_t read_extra(void *context, void *data, size_t size) {
     }
     if (read_error_name && !strcmp(record->name, read_error_name)) {
         return -EIO;
+    }
+    if (read_short_name && !strcmp(record->name, read_short_name)) {
+        CHECK(size > 0);
+        memcpy(data, record->data, size - 1);
+        return size - 1;
     }
     CHECK(size <= record->size);
     memcpy(data, record->data, size);
@@ -859,6 +865,8 @@ static void keyspace_ordinals(void) {
 
 #if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_ARRAY)
 #include "mutation_cases.inc"
+#include "blob_validation_cases.inc"
+#include "review_storage_cases.inc"
 #endif
 
 int main(void) {
@@ -889,6 +897,18 @@ int main(void) {
         queue_cycle_case();
     } else if (!strncmp(operation, "mutation-", 9)) {
         mutation_cases(operation + 9);
+    } else if (!strncmp(operation, "review-", 7)) {
+        review_storage_cases(operation + 7);
+    } else if (!strcmp(operation, "blob-capacity")) {
+        small_blob_capacity();
+    } else if (!strcmp(operation, "blob-constraints")) {
+        raw_keyspace_constraints();
+    } else if (!strcmp(operation, "blob-pool")) {
+        small_blob_pool_failure();
+    } else if (!strcmp(operation, "blob-load-valid")) {
+        valid_keyspace_load();
+    } else if (!strncmp(operation, "blob-load-", 10)) {
+        rejected_keyspace_load(operation + 10);
     } else if (!strcmp(operation, "array-error")) {
         array_error();
     } else if (!strcmp(operation, "blob-error")) {

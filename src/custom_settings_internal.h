@@ -97,6 +97,9 @@ int write_large_locked(const struct zmk_custom_setting *setting, const void *dat
  * custom_settings_array.c. Caller holds custom_settings_lock. */
 struct zmk_custom_setting *array_view_acquire(const struct zmk_custom_setting *array_descriptor,
                                               uint32_t index);
+int write_array_element_locked(const struct zmk_custom_setting *setting,
+                               const struct zmk_custom_setting_value *value, uint32_t array_size,
+                               enum zmk_custom_setting_write_mode mode);
 
 /* Prevent pool recycling while an out-of-lock synchronous event uses a view.
  * Both calls require the state mutex. A fully retained pool returns NULL from
@@ -183,6 +186,12 @@ int keyspace_read_into(const struct zmk_custom_setting *setting, void *buf, size
  * constraints/max_size. */
 int keyspace_validate_payload(const struct zmk_custom_setting_keyspace *keyspace,
                               const struct zmk_custom_setting_value *value);
+/* Validate the complete persisted [public-key NUL][payload] representation
+ * before applying it. Caller holds the paired guard. */
+int keyspace_validate_storage_blob_locked(const struct zmk_custom_setting *setting,
+                                          const void *data, size_t size);
+int validate_stored_setting_value(const struct zmk_custom_setting *setting,
+                                  const struct zmk_custom_setting_value *value);
 
 /* `value` (typed as keyspace->value_type) is converted to raw payload bytes
  * and written as the slot's `[key\0][payload]` blob; `key` is the literal

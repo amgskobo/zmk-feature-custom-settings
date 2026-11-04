@@ -492,6 +492,11 @@ static bool encode_setting_scalar_value(pb_ostream_t *stream, const pb_field_t *
     if (!setting) {
         return true;
     }
+    /* send_response may have waited for the transport since admission. Do
+     * not read a protected body after Studio has locked in that interval. */
+    if (needs_unlock(setting->read_permission)) {
+        return false;
+    }
 
     struct zmk_custom_setting_value value;
     struct zmk_custom_setting_value rpc_value;
@@ -942,7 +947,10 @@ static int setting_to_proto(const struct zmk_custom_setting *setting,
     dest->custom_subsystem_index = 0;
 #endif
 
-    copy_string(dest->key, sizeof(dest->key), zmk_custom_setting_public_key(setting));
+    ret = zmk_custom_setting_copy_public_key(setting, dest->key, sizeof(dest->key));
+    if (ret < 0) {
+        return ret;
+    }
     dest->has_unsaved_value = zmk_custom_setting_has_unsaved_value(setting);
     dest->source = source;
     if (include_meta) {
@@ -1105,9 +1113,8 @@ static int relayed_notification_to_public(const struct zmk_custom_settings_relay
      * stored right before pSize"), so re-encoding this notification with the
      * stale callback in place makes the precallback run in encode context
      * and overwrite the SettingValue union with the decode callback's
-     * pointers - observed on real hardware as every relayed INT32 turning
-     * into 362819 (0x58943, the Thumb address of decode_into_bounded_scratch)
-     * and every relayed BYTES/STRING value vanishing. Clear it so the
+     * pointers. INT32 payloads can become pointer bits and BYTES/STRING
+     * payloads can disappear. Clear it so the
      * republish encode sees no message-level callback. */
     notification->cb_notification_type = (pb_callback_t){0};
     if (notification->which_notification_type !=
@@ -1246,6 +1253,27 @@ void zmk_custom_settings_notify_suppress_end(void) { notify_suppress_end(); }
 static uint32_t notify_submit_count_for_test;
 #endif
 
+#if ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
+struct setting_notification_payload {
+    const cormoran_zmk_custom_settings_Notification *notification;
+    const struct zmk_custom_setting *setting;
+};
+
+static bool encode_current_setting_notification(pb_ostream_t *stream, const pb_field_t *field,
+                                                void *const *arg) {
+    const struct setting_notification_payload *payload = *arg;
+    const cormoran_zmk_custom_settings_Setting *value =
+        &payload->notification->notification_type.setting.setting;
+    if ((value->has_value || value->has_default_value) &&
+        (payload->setting->confidentiality == ZMK_CUSTOM_SETTING_CONFIDENTIALITY_DEVICE_PRIVATE ||
+         needs_unlock(payload->setting->read_permission))) {
+        return false;
+    }
+    void *notification = (void *)payload->notification;
+    return encode_notification_payload(stream, field, &notification);
+}
+#endif
+
 static int raise_setting_notification(const struct zmk_custom_setting *setting,
                                       cormoran_zmk_custom_settings_SettingNotificationKind kind,
                                       bool include_value, bool include_meta, bool include_default,
@@ -1312,9 +1340,10 @@ static int raise_setting_notification(const struct zmk_custom_setting *setting,
         return index;
     }
 
+    struct setting_notification_payload gated = {.notification = notification, .setting = setting};
     pb_callback_t payload = {
-        .funcs.encode = encode_notification_payload,
-        .arg = notification,
+        .funcs.encode = encode_current_setting_notification,
+        .arg = &gated,
     };
 
     ret = raise_zmk_studio_custom_notification((struct zmk_studio_custom_notification){
@@ -1677,13 +1706,17 @@ static bool write_mode_supported(cormoran_zmk_custom_settings_SettingWriteMode m
            mode == cormoran_zmk_custom_settings_SettingWriteMode_SETTING_WRITE_MODE_PERSIST;
 }
 
-static int handle_private_write_setting(const struct zmk_custom_settings_setting_ref *ref,
-                                        const struct zmk_custom_setting_value *value,
-                                        bool value_is_array, uint32_t array_index,
-                                        uint32_t array_size,
-                                        cormoran_zmk_custom_settings_SettingWriteMode write_mode,
-                                        cormoran_zmk_custom_settings_Response *resp,
-                                        bool value_uses_rpc_format) {
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_TEST)
+/* Owner fixtures inspect/churn the resolved target through real APIs. */
+static void (*write_target_observer_for_test)(const struct zmk_custom_setting *setting);
+#endif
+
+static int handle_private_write_setting_locked(
+    const struct zmk_custom_settings_setting_ref *ref, const struct zmk_custom_setting_value *value,
+    bool value_is_array, uint32_t array_index, uint32_t array_size,
+    cormoran_zmk_custom_settings_SettingWriteMode write_mode,
+    cormoran_zmk_custom_settings_Response *resp, bool value_uses_rpc_format,
+    const struct zmk_custom_setting **out_setting, bool *out_changed) {
     if (!write_mode_supported(write_mode)) {
         return -EINVAL;
     }
@@ -1730,6 +1763,19 @@ static int handle_private_write_setting(const struct zmk_custom_settings_setting
         return 0;
     }
 
+    retain_setting_notification_locked(setting);
+    *out_setting = setting;
+    uint64_t keyspace_epoch = 0;
+    if (IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE) &&
+        zmk_custom_setting_keyspace_of(setting)) {
+        keyspace_epoch = keyspace_identity_epoch_locked();
+    }
+#if IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_TEST)
+    if (write_target_observer_for_test) {
+        write_target_observer_for_test(setting);
+    }
+#endif
+
     enum zmk_custom_setting_write_mode mode =
         write_mode == cormoran_zmk_custom_settings_SettingWriteMode_SETTING_WRITE_MODE_PERSIST
             ? ZMK_CUSTOM_SETTING_WRITE_MODE_PERSIST
@@ -1744,15 +1790,47 @@ static int handle_private_write_setting(const struct zmk_custom_settings_setting
         }
         value = &internal_value;
     }
-
-    ret = write_as_array ? zmk_custom_setting_write_array_element(setting, value, array_size, mode)
-                         : zmk_custom_setting_write(setting, value, mode);
+    /* A converter can re-enter lifecycle APIs on this same thread, despite
+     * the recursive mutex. Refuse a deleted/reused keyspace target. */
+    if (IS_ENABLED(CONFIG_ZMK_CUSTOM_SETTINGS_KEYSPACE) &&
+        zmk_custom_setting_keyspace_of(setting) &&
+        keyspace_epoch != keyspace_identity_epoch_locked()) {
+        return -EAGAIN;
+    }
+    ret = write_as_array ? write_array_element_locked(setting, value, array_size, mode)
+                         : write_setting_value_locked(setting, value, mode);
     if (ret < 0) {
         return ret;
     }
 
+    *out_changed = true;
     set_status(resp, 1, "Setting written");
     return 0;
+}
+
+static int handle_private_write_setting(const struct zmk_custom_settings_setting_ref *ref,
+                                        const struct zmk_custom_setting_value *value,
+                                        bool value_is_array, uint32_t array_index,
+                                        uint32_t array_size,
+                                        cormoran_zmk_custom_settings_SettingWriteMode write_mode,
+                                        cormoran_zmk_custom_settings_Response *resp,
+                                        bool value_uses_rpc_format) {
+    /* Bind authorization and mutation to the same resolved identity. The
+     * paired guard prevents array-view recycling and keyspace delete/reuse,
+     * including while converter callbacks and persistence run. */
+    custom_settings_state_lock();
+    const struct zmk_custom_setting *setting = NULL;
+    bool changed = false;
+    int ret = handle_private_write_setting_locked(ref, value, value_is_array, array_index,
+                                                  array_size, write_mode, resp,
+                                                  value_uses_rpc_format, &setting, &changed);
+    finish_setting_change_locked(
+        setting,
+        write_mode == cormoran_zmk_custom_settings_SettingWriteMode_SETTING_WRITE_MODE_PERSIST
+            ? ZMK_CUSTOM_SETTING_CHANGED_SAVED
+            : ZMK_CUSTOM_SETTING_CHANGED_VALUE_UPDATED,
+        false, ret == 0 && changed);
+    return ret;
 }
 
 #if ZMK_CUSTOM_SETTINGS_LOCAL_STUDIO_RPC
